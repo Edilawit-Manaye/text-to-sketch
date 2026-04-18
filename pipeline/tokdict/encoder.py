@@ -20,21 +20,29 @@ def encode_stroke5(
     stroke5: np.ndarray,
     codebook: np.ndarray,
 ) -> np.ndarray:
-    """Map each stroke-5 row to a discrete token index."""
-    K = len(codebook)
-    tokens = np.empty(len(stroke5), dtype=np.int32)
+    """Map each stroke-5 row to a discrete token index.
 
-    for i, row in enumerate(stroke5):
+    Pen-lift points (p2=1) emit **two** tokens: a codebook motion token
+    preserving the (dx, dy) displacement, followed by a SEP token (K).
+    This matches Sketchformer's tokenizer approach and prevents
+    cumulative position drift at stroke boundaries.
+    """
+    K = len(codebook)
+    tokens: list[int] = []
+
+    for row in stroke5:
         p3 = row[4]
         p2 = row[3]
 
         if p3 == 1.0:
-            tokens[i] = K + 1          # end-of-sketch
-        elif p2 == 1.0:
-            tokens[i] = K              # pen-lift
+            tokens.append(K + 1)       # end-of-sketch
         else:
-            # Nearest centroid by L2 distance.
+            # Quantize (dx, dy) for ALL points, including pen-lift.
             delta = codebook - row[:2]
-            tokens[i] = int(np.argmin((delta * delta).sum(axis=1)))
+            motion_token = int(np.argmin((delta * delta).sum(axis=1)))
+            tokens.append(motion_token)
 
-    return tokens
+            if p2 == 1.0:
+                tokens.append(K)       # SEP inserted after motion
+
+    return np.array(tokens, dtype=np.int32)

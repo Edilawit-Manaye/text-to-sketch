@@ -62,27 +62,28 @@ def main() -> None:
     # Pen states (columns 2, 3, 4) should be exactly preserved
     pen_states_match = np.array_equal(original_s5[:, 2:], reconstructed_s5[:, 2:])
     
-    # Motion (columns 0, 1) - calculate errors only for p1 == 1 (drawing points)
-    drawing_mask = original_s5[:, 2] == 1.0
+    # Motion (columns 0, 1) - calculate errors for ALL points except end-of-sketch
+    # because both p1=1 (drawing) and p2=1 (pen-lift) contain valid spatial displacements
+    motion_mask = original_s5[:, 4] == 0.0
     
-    orig_motion = original_s5[drawing_mask, :2]
-    recon_motion = reconstructed_s5[drawing_mask, :2]
+    orig_motion = original_s5[motion_mask, :2]
+    recon_motion = reconstructed_s5[motion_mask, :2]
 
     # Calculate errors
     abs_errors = np.abs(orig_motion - recon_motion)
-    mae_x = np.mean(abs_errors[:, 0])
-    mae_y = np.mean(abs_errors[:, 1])
-    max_err_x = np.max(abs_errors[:, 0])
-    max_err_y = np.max(abs_errors[:, 1])
+    mae_x = float(np.mean(abs_errors[:, 0])) if len(abs_errors) > 0 else 0.0
+    mae_y = float(np.mean(abs_errors[:, 1])) if len(abs_errors) > 0 else 0.0
+    max_err_x = float(np.max(abs_errors[:, 0])) if len(abs_errors) > 0 else 0.0
+    max_err_y = float(np.max(abs_errors[:, 1])) if len(abs_errors) > 0 else 0.0
 
     print("SUMMARY")
     print(f"  Total sequence length : {n_points} points")
-    print(f"  Drawing points (p1=1) : {drawing_mask.sum()} points")
+    print(f"  Motion points evaluated : {motion_mask.sum()} points (drawing + pen-lifts)")
     print(f"  Pen states preserved  : {'✅ YES' if pen_states_match else '❌ NO'}")
     
     print("\nQUANTIZATION ERROR (Motion)")
-    print(f"  Mean Absolute Error   : dx={mae_x:.4f} px, dy={mae_y:.4f} px")
-    print(f"  Max Absolute Error    : dx={max_err_x:.4f} px, dy={max_err_y:.4f} px")
+    print(f"  Mean Absolute Error   : dx={mae_x:.4f}, dy={mae_y:.4f}")
+    print(f"  Max Absolute Error    : dx={max_err_x:.4f}, dy={max_err_y:.4f}")
     
     print("\nSAMPLE COMPARISON (First 5 points)")
     print("  idx |       Original (dx, dy, p1, p2, p3)      |    Reconstructed (dx, dy, p1, p2, p3)  ")
