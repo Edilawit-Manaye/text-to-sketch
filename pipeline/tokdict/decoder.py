@@ -1,10 +1,6 @@
-
-
 from __future__ import annotations
 
 import numpy as np
-
-
 
 def decode_tokens(
     tokens: np.ndarray,
