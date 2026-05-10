@@ -48,8 +48,8 @@ Anime image
 
 | Stage | Module | Description |
 |---|---|---|
-| **1** | `pipeline/steps/sketch_ext  ractor.py` | ControlNet anime lineart extraction |
-| **2** | `pipeline/steps/vectorizer.py` | RDP-simplified vector stroke extraction |
+| **1** | `scripts/data_prep/extract_sketches.py` | ControlNet anime lineart extraction |
+| **2** | `pipeline/steps/vectorizer.py` | RDP-simplified vector stroke extraction, default epsilon `0.5` |
 | **3** | `pipeline/steps/ordering_algorithms.py` | Directional bias / Greedy NN / TSP ordering |
 | **4** | `pipeline/steps/kinematics.py` | Sigma-Lognormal velocity model |
 | **5** | `pipeline/steps/stroke5_formatter.py` | stroke-5 `[Δx, Δy, p1, p2, p3]` formatter |
@@ -76,21 +76,27 @@ text-to-sketch/
 │   │   ├── builder.py                 # K-means codebook builder
 │   │   ├── decoder.py                 # token-index → stroke-5 decoder
 │   │   └── encoder.py                 # stroke-5 → token-index encoder
+│   ├── visualization/
+│   │   └── sketch_comparison.py       # Original vs simplified sketch plots
 │   └── utils/
 │       ├── __init__.py
 │       └── io.py                      # save/load helpers for .npz and .npy
 │
 ├── scripts/                           # Runnable CLI entry-points
-│   ├── download_data.py               # Kaggle dataset download
-│   ├── extract_sketches.py            # Stage 1 batch lineart extraction
+│   ├── data_prep/
+│   │   ├── download_data.py           # Kaggle dataset download
+│   │   └── extract_sketches.py        # Stage 1 batch lineart extraction
+│   ├── eval/
+│   │   ├── compare_rdp_epsilon.py     # Top-point RDP comparison report
+│   │   ├── evaluate_ordering.py       # Ordering visualisation & evaluation
+│   │   └── evaluate_encoder.py        # Tok-Dict encoding/decoding evaluation
 │   ├── run_pipeline.py                # Unified interactive pipeline runner (2–5)
-│   ├── evaluate_ordering.py           # Ordering visualisation & evaluation
-│   └── evaluate_encoder.py            # Tok-Dict encoding/decoding evaluation
 │
 ├── data/                              # All data (git-ignored)
 │   ├── raw/                           # Raw downloaded datasets
 │   └── processed/
 │       ├── sketches/                  # Stage 1 output — binary line-art .png
+│       ├── sketches_max_20000/        # Filtered sketches used by the pipeline
 │       ├── stroke5/                   # Stage 5 output — stroke-5 .npz files
 │       ├── tokdict/                   # Tok-Dict output — codebook.npy + metadata.json
 │       ├── tokens/                    # Tok-Dict output — encoded tokens .npz files
@@ -191,7 +197,7 @@ MAX_PER_FOLDER=15
 ### 1. Download Dataset
 
 ```bash
-python scripts/download_data.py
+python scripts/data_prep/download_data.py
 ```
 
 Downloads the configured Kaggle dataset into `data/raw/`.
@@ -201,13 +207,13 @@ Downloads the configured Kaggle dataset into `data/raw/`.
 ### 2. Extract Sketches
 
 ```bash
-python scripts/extract_sketches.py
+python scripts/data_prep/extract_sketches.py
 ```
 
 With custom options:
 
 ```bash
-python scripts/extract_sketches.py \
+python scripts/data_prep/extract_sketches.py \
   --input-dir data/raw/data/anime_images \
   --output-dir data/processed/sketches \
   --detect-resolution 512 \
@@ -219,7 +225,18 @@ Produces binary line-art `.png` files in `data/processed/sketches/`.
 
 ---
 
-### 3. Run Full Pipeline
+### 3. Filter Sketches
+
+```bash
+python scripts/data_prep/filter_sketches_by_points.py
+```
+
+Produces filtered sketch `.png` files in `data/processed/sketches_max_20000/`.
+The rest of the codebase uses this folder by default.
+
+---
+
+### 4. Run Full Pipeline
 
 **Interactive mode — asks how many sketches to process and which ordering:**
 
@@ -251,20 +268,34 @@ Produces:
 
 ---
 
-### 4. Evaluate Output
+### 5. Evaluate Output
 
 **Evaluate Ordering:**
 ```bash
-python scripts/evaluate_ordering.py
-python scripts/evaluate_ordering.py --samples 20
+python scripts/eval/evaluate_ordering.py
+python scripts/eval/evaluate_ordering.py --samples 20
 ```
 Saves side-by-side evaluation plots to `data/processed/evaluations/`.
+Uses `data/processed/sketches_max_20000/` by default.
 
 **Evaluate Tok-Dict Encoder:**
 ```bash
-python scripts/evaluate_encoder.py
+python scripts/eval/evaluate_encoder.py
 ```
 Tests the encoding-decoding cycle and computes quantization loss.
+
+**Compare RDP epsilon output on the densest sketches:**
+```bash
+python scripts/eval/compare_rdp_epsilon.py
+```
+
+By default this scans `data/processed/sketches_max_20000/`, selects the 20
+sketches with the most pre-simplification contour points, simplifies them with
+RDP epsilon `0.5`, and saves:
+
+- `data/processed/rdp_epsilon_0_5/reports/top_stroke_point_sketches.csv`
+- `data/processed/rdp_epsilon_0_5/visualizations/*.png`
+- `data/processed/rdp_epsilon_0_5/stroke5/*.npz`
 
 ---
 

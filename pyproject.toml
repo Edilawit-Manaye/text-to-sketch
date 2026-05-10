@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "text-to-sketch"
+version = "0.1.0"
+description = "Anime image to Sketchformer-ready stroke sequence preprocessing pipeline."
+readme = "README.md"
+requires-python = ">=3.10"
+
+[project.scripts]
+tts-download-data = "prep_data.download_data:main"
+tts-extract-sketches = "prep_data.extract_sketches:main"
+tts-filter-sketches = "prep_data.filter_sketches:main"
+tts-prepare-sketchformer = "prep_data.prepare_sketchformer:main"
+tts-run-pipeline = "pipeline.run_pipeline:main"
+tts-compare-rdp = "metrics.compare_rdp_epsilon:main"
+tts-evaluate-encoder = "metrics.evaluate_encoder:main"
+tts-evaluate-ordering = "metrics.evaluate_ordering:main"
+
+[tool.setuptools.packages.find]
+include = [
+  "builders",
+  "builders.*",
+  "core",
+  "dataloaders",
+  "experiments",
+  "metrics",
+  "models",
+  "pipeline",
+  "prep_data",
+  "prep_data.*",
+  "utils",
+]
