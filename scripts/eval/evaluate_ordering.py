@@ -1,20 +1,21 @@
-import os
 import sys
 import random
 from pathlib import Path
 
-# Add the directory to python path if not there
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT))
 
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import numpy as np
 from tqdm import tqdm
 
-from vectorizer import vectorize_image
-from stroke_ordering import order_greedy_nearest_neighbor, order_directional_bias, order_tsp
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+from pipeline.steps.vectorizer import vectorize_image
+from pipeline.steps.ordering_algorithms import (
+    order_directional_bias,
+    order_greedy_nearest_neighbor,
+    order_tsp,
+)
 
 def plot_strokes(strokes, ax, title):
     """
@@ -47,7 +48,7 @@ def plot_strokes(strokes, ax, title):
     ax.axis('off')
 
 def main():
-    sketches_dir = PROJECT_ROOT / "data" / "processed" / "sketches"
+    sketches_dir = PROJECT_ROOT / "data" / "processed" / "sketches_max_20000"
     output_dir = PROJECT_ROOT / "data" / "processed" / "evaluations"
     output_dir.mkdir(parents=True, exist_ok=True)
     

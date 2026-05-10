@@ -3,8 +3,8 @@ Unified interactive runner for the Hand Simulation Pipeline.
 
 Prerequisites
 -------------
-    Run `python scripts/extract_sketches.py` first to populate
-    data/processed/sketches/ with binary line-art images.
+    Run `python scripts/data_prep/filter_sketches_by_points.py` first to
+    populate data/processed/sketches_max_20000/ with filtered line-art images.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from tqdm import tqdm
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from pipeline.steps.vectorizer import vectorize_image
+from pipeline.steps.vectorizer import DEFAULT_RDP_EPSILON, vectorize_image
 from pipeline.steps.ordering_algorithms import (
     order_directional_bias,
     order_greedy_nearest_neighbor,
@@ -94,6 +94,7 @@ def run_pipeline(
     tokdict_dir: Path,
     n_sketches: int,
     ordering: str,
+    rdp_epsilon: float = DEFAULT_RDP_EPSILON,
     codebook_K: int = 1000,
     seed: int = 42,
 ) -> None:
@@ -102,7 +103,7 @@ def run_pipeline(
     all_sketches = sorted(sketches_dir.rglob("*.png"))
     if not all_sketches:
         print(f"[error] No sketches found in {sketches_dir}")
-        print("        Run 'python scripts/extract_sketches.py' first.")
+        print("        Run 'python scripts/data_prep/filter_sketches_by_points.py' first.")
         sys.exit(1)
 
     n = min(n_sketches, len(all_sketches))
@@ -111,7 +112,10 @@ def run_pipeline(
 
     order_fn = _ORDER_FN_MAP[ordering]
 
-    print(f"\n[pipeline] {n} sketches  ·  ordering: {ordering}  ·  K={codebook_K}")
+    print(
+        f"\n[pipeline] {n} sketches  ·  ordering: {ordering}"
+        f"  ·  RDP epsilon={rdp_epsilon}  ·  K={codebook_K}"
+    )
     print(f"[pipeline] stroke-5 output → {stroke5_dir}")
     print()
 
@@ -121,7 +125,7 @@ def run_pipeline(
     for img_path in tqdm(samples, desc="Steps B-E", unit="sketch"):
         try:
             # B: Vectorize
-            strokes = vectorize_image(img_path)
+            strokes = vectorize_image(img_path, epsilon=rdp_epsilon)
             if not strokes:
                 skipped += 1
                 continue
@@ -201,7 +205,7 @@ def run_pipeline(
 
 
 def main() -> None:
-    sketches_dir = PROJECT_ROOT / "data" / "processed" / "sketches"
+    sketches_dir = PROJECT_ROOT / "data" / "processed" / "sketches_max_20000"
     stroke5_dir  = PROJECT_ROOT / "data" / "processed" / "stroke5"
     tokdict_dir  = PROJECT_ROOT / "data" / "processed" / "tokdict"
 
@@ -213,7 +217,7 @@ def main() -> None:
 
     if not available:
         print(f"\n[error] No sketches found in {sketches_dir}")
-        print("        Run 'python scripts/extract_sketches.py' first.")
+        print("        Run 'python scripts/data_prep/filter_sketches_by_points.py' first.")
         sys.exit(1)
 
     default_n = min(50, len(available))
