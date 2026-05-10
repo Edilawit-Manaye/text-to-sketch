@@ -3,3 +3,12 @@
 data/
 __pycache__/
 sketchformer/
+*.egg-info/
+build/
+dist/
+weights/*
+!weights/README.md
+!weights/pretrained/
+!weights/pretrained/.gitkeep
+!weights/finetuned/
+!weights/finetuned/.gitkeep

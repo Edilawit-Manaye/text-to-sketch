@@ -48,12 +48,12 @@ Anime image
 
 | Stage | Module | Description |
 |---|---|---|
-| **1** | `scripts/data_prep/extract_sketches.py` | ControlNet anime lineart extraction |
-| **2** | `pipeline/steps/vectorizer.py` | RDP-simplified vector stroke extraction, default epsilon `0.5` |
-| **3** | `pipeline/steps/ordering_algorithms.py` | Directional bias / Greedy NN / TSP ordering |
-| **4** | `pipeline/steps/kinematics.py` | Sigma-Lognormal velocity model |
-| **5** | `pipeline/steps/stroke5_formatter.py` | stroke-5 `[Δx, Δy, p1, p2, p3]` formatter |
-| **Tok-Dict** | `pipeline/tokdict/` | K-means codebook builder + encoder + decoder |
+| **1** | `pipeline/lineart.py` | ControlNet anime lineart extraction |
+| **2** | `pipeline/vectorization.py` | RDP-simplified vector stroke extraction, default epsilon `0.5` |
+| **3** | `pipeline/ordering.py` | Directional bias / Greedy NN / TSP ordering |
+| **4** | `pipeline/kinematics.py` | Sigma-Lognormal velocity model |
+| **5** | `pipeline/stroke5.py` | stroke-5 `[Δx, Δy, p1, p2, p3]` formatter |
+| **Tok-Dict** | `prep_data/sketch_token/` + `utils/tokenizer.py` | K-means codebook builder + encoder/decoder |
 
 ---
 
@@ -62,31 +62,52 @@ Anime image
 ```
 text-to-sketch/
 │
-├── pipeline/                          # Core logic — importable Python package
-│   ├── __init__.py
-│   ├── steps/                         # One module per pipeline stage
-│   │   ├── __init__.py
-│   │   ├── sketch_extractor.py          # Stage 1 — Lineart extraction
-│   │   ├── vectorizer.py                # Stage 2 — Vectorization + RDP
-│   │   ├── ordering_algorithms.py       # Stage 3 — Stroke ordering
-│   │   ├── kinematics.py                # Stage 4 — Kinematics
-│   │   └── stroke5_formatter.py         # Stage 5 — stroke-5 formatting
-│   ├── tokdict/                       # Tok-Dict module
-│   │   ├── __init__.py
-│   │   ├── builder.py                 # K-means codebook builder
-│   │   ├── decoder.py                 # token-index → stroke-5 decoder
-│   │   └── encoder.py                 # stroke-5 → token-index encoder
-│   ├── visualization/
-│   │   └── sketch_comparison.py       # Original vs simplified sketch plots
-│   └── utils/
-│       ├── __init__.py
-│       └── io.py                      # save/load helpers for .npz and .npy
+├── pipeline/                          # Main pipeline logic
+│   ├── lineart.py                     # Stage 1 — Lineart extraction helpers
+│   ├── vectorization.py               # Stage 2 — Vectorization + RDP
+│   ├── ordering.py                    # Stage 3 — Stroke ordering
+│   ├── kinematics.py                  # Stage 4 — Kinematics
+│   ├── stroke5.py                     # Stage 5 — stroke-5 formatting
+│   ├── workflow.py                    # End-to-end Stage 2–5 + Tok-Dict workflow
+│   └── run_pipeline.py                # Interactive pipeline CLI
 │
-├── scripts/                           # Runnable CLI entry-points
-│   ├── data_prep/
+├── prep_data/                         # Data preparation commands
+│   ├── download_data.py
+│   ├── extract_sketches.py
+│   ├── filter_sketches.py
+│   ├── prepare_sketchformer.py
+│   └── sketch_token/
+│       └── create_token_dict.py       # K-means sketch token dictionary
+│
+├── dataloaders/                       # Future Sketchformer-ready data loaders
+├── models/                            # Future Sketchformer model definitions
+├── builders/                          # Future losses, schedulers, layers, builders
+│   └── layers/
+├── core/                              # Future training/experiment orchestration
+├── experiments/                       # Future fine-tuning and analysis scripts
+├── dependencies/                      # Environment, Docker, and dependency notes
+│
+├── metrics/                           # Metrics, reports, and visualisation
+│   ├── compare_rdp_epsilon.py
+│   ├── evaluate_encoder.py
+│   ├── evaluate_ordering.py
+│   └── visualisation.py
+│
+├── utils/                             # Shared paths, persistence, tokenizer helpers
+│   ├── io.py
+│   ├── paths.py
+│   └── tokenizer.py                   # encode/decode sketch token sequences
+├── weights/                           # Fine-tuned and pretrained model weights
+│   ├── pretrained/
+│   └── finetuned/
+│
+├── scripts/                           # Thin compatibility wrappers
+│   ├── prepare_data/
 │   │   ├── download_data.py           # Kaggle dataset download
-│   │   └── extract_sketches.py        # Stage 1 batch lineart extraction
-│   ├── eval/
+│   │   ├── extract_sketches.py        # Stage 1 batch lineart extraction
+│   │   ├── filter_sketches_by_points.py
+│   │   └── prepare_anime_data.py
+│   ├── metrics/
 │   │   ├── compare_rdp_epsilon.py     # Top-point RDP comparison report
 │   │   ├── evaluate_ordering.py       # Ordering visualisation & evaluation
 │   │   └── evaluate_encoder.py        # Tok-Dict encoding/decoding evaluation
@@ -98,12 +119,15 @@ text-to-sketch/
 │       ├── sketches/                  # Stage 1 output — binary line-art .png
 │       ├── sketches_max_20000/        # Filtered sketches used by the pipeline
 │       ├── stroke5/                   # Stage 5 output — stroke-5 .npz files
-│       ├── tokdict/                   # Tok-Dict output — codebook.npy + metadata.json
-│       ├── tokens/                    # Tok-Dict output — encoded tokens .npz files
+│       ├── sketch_token/              # codebook.npy + metadata.json
+│       ├── tokens/                    # encoded token .npz files
 │       └── evaluations/               # Ordering evaluation plots
 │
+├── sketchformer/                      # External Sketchformer checkout (git-ignored)
+├── docs/
 ├── .env                               # Local environment variables (git-ignored)
 ├── .gitignore
+├── pyproject.toml                     # Package metadata + console commands
 ├── requirements.txt
 └── README.md
 ```
@@ -155,7 +179,11 @@ source .venv/bin/activate        # Linux / macOS
 
 ```bash
 pip install -r requirements.txt
+pip install -e .
 ```
+
+`pip install -e .` makes these top-level packages importable from anywhere
+inside the virtual environment and installs the `tts-*` console commands.
 
 ### 4. Configure Kaggle Credentials
 
@@ -197,7 +225,7 @@ MAX_PER_FOLDER=15
 ### 1. Download Dataset
 
 ```bash
-python scripts/data_prep/download_data.py
+python scripts/prepare_data/download_data.py
 ```
 
 Downloads the configured Kaggle dataset into `data/raw/`.
@@ -207,13 +235,13 @@ Downloads the configured Kaggle dataset into `data/raw/`.
 ### 2. Extract Sketches
 
 ```bash
-python scripts/data_prep/extract_sketches.py
+python scripts/prepare_data/extract_sketches.py
 ```
 
 With custom options:
 
 ```bash
-python scripts/data_prep/extract_sketches.py \
+python scripts/prepare_data/extract_sketches.py \
   --input-dir data/raw/data/anime_images \
   --output-dir data/processed/sketches \
   --detect-resolution 512 \
@@ -228,7 +256,7 @@ Produces binary line-art `.png` files in `data/processed/sketches/`.
 ### 3. Filter Sketches
 
 ```bash
-python scripts/data_prep/filter_sketches_by_points.py
+python scripts/prepare_data/filter_sketches_by_points.py
 ```
 
 Produces filtered sketch `.png` files in `data/processed/sketches_max_20000/`.
@@ -262,8 +290,8 @@ Choose [1/2/3, default: 1]:
 
 Produces:
 - `data/processed/stroke5/<name>.npz` — stroke-5 arrays, shape `(N+1, 5)`
-- `data/processed/tokdict/codebook.npy` — K-means centroids, shape `(K, 2)`
-- `data/processed/tokdict/metadata.json` — K, n_samples, timestamp
+- `data/processed/sketch_token/codebook.npy` — K-means centroids, shape `(K, 2)`
+- `data/processed/sketch_token/metadata.json` — K, n_samples, timestamp
 - `data/processed/tokens/<name>.npz` — encoded discrete motion token sequences
 
 ---
@@ -272,21 +300,21 @@ Produces:
 
 **Evaluate Ordering:**
 ```bash
-python scripts/eval/evaluate_ordering.py
-python scripts/eval/evaluate_ordering.py --samples 20
+python scripts/metrics/evaluate_ordering.py
+python scripts/metrics/evaluate_ordering.py --samples 20
 ```
 Saves side-by-side evaluation plots to `data/processed/evaluations/`.
 Uses `data/processed/sketches_max_20000/` by default.
 
 **Evaluate Tok-Dict Encoder:**
 ```bash
-python scripts/eval/evaluate_encoder.py
+python scripts/metrics/evaluate_encoder.py
 ```
 Tests the encoding-decoding cycle and computes quantization loss.
 
 **Compare RDP epsilon output on the densest sketches:**
 ```bash
-python scripts/eval/compare_rdp_epsilon.py
+python scripts/metrics/compare_rdp_epsilon.py
 ```
 
 By default this scans `data/processed/sketches_max_20000/`, selects the 20
@@ -315,11 +343,11 @@ Each `.npz` contains a single array `stroke5` of shape `(N+1, 5)`:
 
 Load with:
 ```python
-from pipeline.utils.io import load_stroke5
+from utils.io import load_stroke5
 s5 = load_stroke5("data/processed/stroke5/my_sketch.npz")
 ```
 
-### Tok-Dict Codebook (`data/processed/tokdict/`)
+### Tok-Dict Codebook (`data/processed/sketch_token/`)
 
 | File | Contents |
 |---|---|
@@ -328,11 +356,11 @@ s5 = load_stroke5("data/processed/stroke5/my_sketch.npz")
 
 Encode a sketch to token indices:
 ```python
-from pipeline.utils.io import load_codebook
-from pipeline.tokdict.encoder import encode_stroke5
-from pipeline.tokdict.decoder import decode_tokens
+from utils.io import load_codebook
+from utils.tokenizer import encode_stroke5
+from utils.tokenizer import decode_tokens
 
-codebook = load_codebook("data/processed/tokdict/codebook.npy")
+codebook = load_codebook("data/processed/sketch_token/codebook.npy")
 tokens   = encode_stroke5(s5, codebook)   # shape (N+1,), dtype int32
 # tokens[i] ∈ [0, K-1]  → motion token
 # tokens[i] == K         → pen-lift token
@@ -367,8 +395,10 @@ Each `.npz` contains a discrete sequence array named `tokens` resulting from enc
 
 | Script | Purpose |
 |---|---|
-| `python scripts/download_data.py` | Download Kaggle dataset |
-| `python scripts/extract_sketches.py [--input-dir] [--output-dir] [--detect-resolution] [--image-resolution] [--max-per-folder]` | Run Stage A lineart extraction |
-| `python scripts/run_pipeline.py` | Interactive Stages B–E + Tok-Dict |
-| `python scripts/evaluate_ordering.py [--samples N]` | Visualise ordering quality |
-| `python scripts/evaluate_encoder.py` | Evaluate Tok-Dict encoding/decoding |
+| `python scripts/prepare_data/download_data.py` or `tts-download-data` | Download Kaggle dataset |
+| `python scripts/prepare_data/extract_sketches.py [--input-dir] [--output-dir] [--detect-resolution] [--image-resolution] [--max-per-folder]` or `tts-extract-sketches` | Run Stage A lineart extraction |
+| `python scripts/prepare_data/filter_sketches_by_points.py` or `tts-filter-sketches` | Filter dense sketches before vectorization |
+| `python scripts/run_pipeline.py` or `tts-run-pipeline` | Interactive Stages B–E + Tok-Dict |
+| `python scripts/metrics/evaluate_ordering.py [--samples N]` or `tts-evaluate-ordering` | Visualise ordering quality |
+| `python scripts/metrics/evaluate_encoder.py` or `tts-evaluate-encoder` | Evaluate Tok-Dict encoding/decoding |
+| `python scripts/metrics/compare_rdp_epsilon.py` or `tts-compare-rdp` | Compare RDP simplification on dense sketches |
