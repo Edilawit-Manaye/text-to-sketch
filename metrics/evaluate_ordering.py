@@ -1,27 +1,26 @@
-import sys
+import argparse
 import random
-from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT))
+from utils.paths import DEFAULT_EVALUATIONS_DIR, DEFAULT_FILTERED_SKETCHES_DIR
 
-import matplotlib.pyplot as plt
-import matplotlib.cm as cm
-import numpy as np
-from tqdm import tqdm
 
-from pipeline.steps.vectorizer import vectorize_image
-from pipeline.steps.ordering_algorithms import (
-    order_directional_bias,
-    order_greedy_nearest_neighbor,
-    order_tsp,
-)
+def parse_args():
+    parser = argparse.ArgumentParser(description="Visualize stroke ordering strategies.")
+    parser.add_argument(
+        "--samples",
+        type=int,
+        default=20,
+        help="Number of sketches to sample for comparison (default: 20).",
+    )
+    return parser.parse_args()
 
 def plot_strokes(strokes, ax, title):
     """
     Plots a list of strokes on a given matplotlib Axis.
     Color transitions from red (first) to blue (last).
     """
+    import matplotlib.pyplot as plt
+
     if not strokes:
         ax.set_title(title + " (Empty)")
         return
@@ -48,8 +47,19 @@ def plot_strokes(strokes, ax, title):
     ax.axis('off')
 
 def main():
-    sketches_dir = PROJECT_ROOT / "data" / "processed" / "sketches_max_20000"
-    output_dir = PROJECT_ROOT / "data" / "processed" / "evaluations"
+    args = parse_args()
+    import matplotlib.pyplot as plt
+    from tqdm import tqdm
+
+    from pipeline.ordering import (
+        order_directional_bias,
+        order_greedy_nearest_neighbor,
+        order_tsp,
+    )
+    from pipeline.vectorization import vectorize_image
+
+    sketches_dir = DEFAULT_FILTERED_SKETCHES_DIR
+    output_dir = DEFAULT_EVALUATIONS_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Collect all sketches
@@ -60,7 +70,7 @@ def main():
         
     # Sample 20 sketches randomly (seeded for reproducibility)
     random.seed(42)
-    sample_size = min(20, len(all_sketches))
+    sample_size = min(args.samples, len(all_sketches))
     samples = random.sample(all_sketches, sample_size)
     
     print(f"Evaluating {sample_size} sketches...")
