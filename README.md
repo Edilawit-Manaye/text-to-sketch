@@ -413,13 +413,3 @@ reconstructed = decode_tokens(tokens, codebook)
 | Evaluate encoder | `python scripts/metrics/evaluate_encoder.py` | `tts-evaluate-encoder` |
 | Compare RDP epsilon | `python scripts/metrics/compare_rdp_epsilon.py` | `tts-compare-rdp` |
 
-## Notes
-
-- `.env` is local and ignored by git. Commit `.env.example` instead.
-- `data/`, `.venv/`, `sketchformer/`, and generated weights are local/runtime
-  artifacts.
-- The downloader uses `rsync --list-only` plus `--files-from` to fetch a limited
-  number of portrait images.
-- The line-art extractor may download ControlNet annotator weights the first
-  time it runs.
-- The current project prepares data; it does not train a model yet.
