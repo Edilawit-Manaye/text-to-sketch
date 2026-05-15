@@ -34,11 +34,17 @@ Danbooru2019 Portraits
 - Convert stroke-5 arrays into Sketchformer-style stroke3 train/valid/test chunks.
 - Generate basic evaluation reports and visualizations.
 
-Model training code is not implemented yet. The folders `models/`, `dataloaders/`,
-`builders/`, `core/`, `experiments/`, and `weights/` are present so the project
-can grow toward training and fine-tuning later.
+Model training code is not implemented yet.
 
 ## Project Layout
+
+The layout includes active preprocessing modules plus empty training-oriented
+folders. In the near term, the external `sketchformer/` checkout is used to
+validate fine-tuning feasibility with the prepared portrait-sketch data. In the
+long term, folders such as `models/`, `dataloaders/`, `builders/`, `core/`,
+`experiments/`, and `weights/` are reserved for building our own modernized
+Sketchformer-compatible codebase inside this repo instead of depending on the
+original Sketchformer repository.
 
 ```text
 text-to-sketch/
@@ -75,8 +81,27 @@ text-to-sketch/
 │   ├── paths.py
 │   └── tokenizer.py
 │
+├── builders/
+│   ├── __init__.py
+│   └── layers/
+│       └── __init__.py
+├── core/
+│   └── __init__.py
+├── dataloaders/
+│   └── __init__.py
+├── models/
+│   └── __init__.py
+├── experiments/
+│   └── __init__.py
+├── dependencies/
+│   └── README.md
+│
 ├── data/
 ├── weights/
+│   ├── README.md
+│   ├── pretrained/
+│   └── finetuned/
+├── sketchformer/
 ├── .env.example
 ├── pyproject.toml
 ├── requirements.txt
@@ -93,8 +118,15 @@ text-to-sketch/
 | `prep_data/prepare_sketchformer.py` | Converts stroke-5 files into Sketchformer-style stroke3 chunks. |
 | `metrics/` | Evaluation and visualization scripts. |
 | `utils/paths.py` | Shared default paths. |
+| `builders/` | Reserved for model-building helpers, custom layers, losses, and schedulers. |
+| `core/` | Reserved for future training loops, validation loops, checkpointing, and orchestration. |
+| `dataloaders/` | Reserved for Sketchformer-compatible dataset loaders. |
+| `models/` | Reserved for in-repo Sketchformer or Sketchformer-inspired model implementations. |
+| `experiments/` | Reserved for fine-tuning configs, ablations, and experiment entry points. |
+| `dependencies/` | Environment notes and integration docs for training dependencies. |
 | `data/` | Local generated data. This is git-ignored. |
 | `weights/` | Placeholder for pretrained and fine-tuned weights. |
+| `sketchformer/` | External Sketchformer checkout for near-term fine-tuning feasibility validation. |
 
 ## Requirements
 
@@ -412,4 +444,3 @@ reconstructed = decode_tokens(tokens, codebook)
 | Evaluate ordering | `python scripts/metrics/evaluate_ordering.py --samples 20` | `tts-evaluate-ordering --samples 20` |
 | Evaluate encoder | `python scripts/metrics/evaluate_encoder.py` | `tts-evaluate-encoder` |
 | Compare RDP epsilon | `python scripts/metrics/compare_rdp_epsilon.py` | `tts-compare-rdp` |
-
