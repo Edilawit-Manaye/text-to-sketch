@@ -5,7 +5,7 @@ binary line-art sketches under data/processed/sketches/.
 Options
 -------
     --input-dir DIR        Source directory containing raw anime images.
-                           (default: $INPUT_DIR or data/raw/data/anime_images)
+                           (default: $INPUT_DIR or data/raw/portraits)
     --output-dir DIR       Destination for extracted sketches.
                            (default: $OUTPUT_DIR or data/processed/sketches)
     --detect-resolution N  Detector input resolution (default: 512).
