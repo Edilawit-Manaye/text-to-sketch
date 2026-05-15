@@ -2,8 +2,8 @@
 Filter sketch images by original image point count.
 
 By default this creates a clean copy of sketches whose original foreground pixel
-count is at or below 20,000. This happens before any vectorization/RDP
-simplification:
+count is at or below the configured --max-points threshold. This happens before
+any vectorization/RDP simplification:
 
     .venv/bin/python scripts/prepare_data/filter_sketches_by_points.py
 
@@ -37,7 +37,7 @@ from utils.paths import (
 DEFAULT_RDP_EPSILON = 0.5
 DEFAULT_INPUT_DIR = DEFAULT_SKETCHES_DIR
 DEFAULT_OUTPUT_DIR = DEFAULT_FILTERED_SKETCHES_DIR
-DEFAULT_REJECTED_DIR = PROCESSED_DATA_DIR / "sketches_over_20000"
+DEFAULT_REJECTED_DIR = PROCESSED_DATA_DIR / "sketches_rejected"
 DEFAULT_REPORT_PATH = PROCESSED_DATA_DIR / "sketch_point_filter_report.csv"
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
 
