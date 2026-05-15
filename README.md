@@ -1,13 +1,17 @@
 # Text-to-Sketch
 
-Text-to-Sketch is a preprocessing and training-preparation project for turning
-anime images into vector sketch data that can be used with Sketchformer.
+Text-to-Sketch is a preprocessing project for turning anime portrait images
+into vector sketch data that can be used for Sketchformer-style experiments.
 
-The current project focuses on the data pipeline:
+The current pipeline is data preparation only. It downloads anime portrait
+images, extracts line-art sketches, filters noisy sketches, vectorizes them,
+orders the strokes, exports stroke-5 arrays, builds a sketch-token codebook,
+and prepares Sketchformer-style stroke3 chunks.
 
 ```text
-anime images
+Danbooru2019 Portraits
   -> line-art sketches
+  -> filtered sketches
   -> vector strokes
   -> ordered drawing paths
   -> human-like timing / kinematics
@@ -16,41 +20,25 @@ anime images
   -> Sketchformer-ready stroke3 chunks
 ```
 
-The project is also being shaped to follow the original Sketchformer repository
-layout. That means folders such as `models/`, `dataloaders/`, `builders/`,
-`core/`, `experiments/`, `metrics/`, `dependencies/`, and `weights/` already
-exist so future fine-tuning work has a clear home.
+## Current Capabilities
 
-## What This Project Is For
+- Download a user-selected number of Danbooru2019 Portraits images over `rsync`.
+- Skip already-installed images and resume incomplete downloads.
+- Extract binary anime line-art sketches with ControlNet's `LineartAnimeDetector`.
+- Filter sketches by foreground point count before vectorization.
+- Vectorize sketches into OpenCV contour strokes with RDP simplification.
+- Order strokes with directional, greedy nearest-neighbor, or TSP-style ordering.
+- Add simple Sigma-Lognormal hand-motion timing.
+- Export stroke-5 `.npz` files.
+- Build a K-means sketch-token codebook and token sequences.
+- Convert stroke-5 arrays into Sketchformer-style stroke3 train/valid/test chunks.
+- Generate basic evaluation reports and visualizations.
 
-This repo is for preparing anime-style image data so it can eventually be used
-to fine-tune or reproduce Sketchformer-style models.
-
-At the moment, it can:
-
-- download the anime dataset from Kaggle
-- extract binary line-art sketches from anime images
-- filter sketches that are too dense
-- vectorize line-art into stroke paths
-- order strokes using several drawing-order strategies
-- add simple hand-motion timing with Sigma-Lognormal kinematics
-- convert timed strokes into stroke-5 arrays
-- build a K-means sketch-token codebook
-- encode stroke-5 arrays into token sequences
-- convert stroke-5 arrays into Sketchformer-style stroke3 train/valid/test chunks
-- generate basic evaluation plots and reports
-
-The next major direction is:
-
-- add real Sketchformer dataloaders
-- add model code under `models/`
-- add training orchestration under `core/`
-- add fine-tuning experiments under `experiments/`
-- manage pretrained and fine-tuned weights under `weights/`
+Model training code is not implemented yet. The folders `models/`, `dataloaders/`,
+`builders/`, `core/`, `experiments/`, and `weights/` are present so the project
+can grow toward training and fine-tuning later.
 
 ## Project Layout
-
-The layout intentionally follows Sketchformer's style.
 
 ```text
 text-to-sketch/
@@ -77,255 +65,89 @@ text-to-sketch/
 │   ├── evaluate_ordering.py
 │   └── visualisation.py
 │
-├── utils/
-│   ├── io.py
-│   ├── paths.py
-│   └── tokenizer.py
-│
-├── builders/
-│   └── layers/
-├── core/
-├── dataloaders/
-├── models/
-├── experiments/
-├── dependencies/
-├── weights/
-│   ├── pretrained/
-│   └── finetuned/
-│
 ├── scripts/
 │   ├── prepare_data/
 │   ├── metrics/
 │   └── run_pipeline.py
 │
+├── utils/
+│   ├── io.py
+│   ├── paths.py
+│   └── tokenizer.py
+│
 ├── data/
-├── sketchformer/
+├── weights/
+├── .env.example
 ├── pyproject.toml
 ├── requirements.txt
 └── README.md
 ```
 
-## Folder Guide
-
-| Folder | Purpose |
+| Path | Purpose |
 |---|---|
-| `pipeline/` | Core image-to-sketch pipeline stages. |
-| `prep_data/` | Dataset download, extraction, filtering, and Sketchformer data preparation. |
-| `prep_data/sketch_token/` | K-means sketch-token codebook generation, matching Sketchformer's `prep_data/sketch_token` idea. |
-| `metrics/` | Evaluation scripts, reports, and visual plots. |
-| `utils/` | Shared paths, file IO, and token encode/decode helpers. |
-| `scripts/` | Thin command wrappers. These keep command paths simple and stable. |
-| `dataloaders/` | Future Sketchformer-style data loaders. |
-| `models/` | Future Sketchformer model definitions. |
-| `builders/` | Future layers, schedulers, losses, and model-building utilities. |
-| `core/` | Future training and experiment orchestration. |
-| `experiments/` | Future fine-tuning and analysis experiments. |
-| `dependencies/` | Environment notes, Dockerfiles, and training dependency setup. |
-| `weights/` | Pretrained and fine-tuned model weights. |
+| `prep_data/download_data.py` | Downloads Danbooru2019 Portraits images. |
+| `prep_data/extract_sketches.py` | Converts raw portrait images to binary line-art sketches. |
+| `prep_data/filter_sketches.py` | Filters sketches by point count. |
+| `pipeline/` | Vectorization, stroke ordering, kinematics, and stroke-5 export. |
+| `prep_data/sketch_token/` | K-means sketch-token codebook generation. |
+| `prep_data/prepare_sketchformer.py` | Converts stroke-5 files into Sketchformer-style stroke3 chunks. |
+| `metrics/` | Evaluation and visualization scripts. |
+| `utils/paths.py` | Shared default paths. |
 | `data/` | Local generated data. This is git-ignored. |
-| `sketchformer/` | External Sketchformer checkout. This is git-ignored. |
-
-## Pipeline Stages
-
-| Step | File | What It Does |
-|---|---|---|
-| 1 | `pipeline/lineart.py` | Uses ControlNet's `LineartAnimeDetector` to create binary line-art sketches. |
-| 2 | `pipeline/vectorization.py` | Uses OpenCV contours and RDP simplification to turn sketches into vector strokes. |
-| 3 | `pipeline/ordering.py` | Orders strokes using directional, greedy nearest-neighbor, or TSP-style ordering. |
-| 4 | `pipeline/kinematics.py` | Adds simple human-like timing with a Sigma-Lognormal model. |
-| 5 | `pipeline/stroke5.py` | Converts timed strokes to stroke-5 format: `[dx, dy, p1, p2, p3]`. |
-| 6 | `prep_data/sketch_token/create_token_dict.py` | Builds a K-means codebook for sketch-token encoding. |
-| 7 | `utils/tokenizer.py` | Encodes stroke-5 arrays to token sequences and decodes them back. |
-| 8 | `prep_data/prepare_sketchformer.py` | Converts stroke-5 data to Sketchformer-style stroke3 chunks. |
-
-## Data Flow
-
-### 1. Raw Images
-
-Downloaded anime images live under:
-
-```text
-data/raw/
-```
-
-The default image input path is:
-
-```text
-data/raw/data/anime_images/
-```
-
-### 2. Extracted Sketches
-
-Line-art extraction writes binary sketch images to:
-
-```text
-data/processed/sketches/
-```
-
-### 3. Filtered Sketches
-
-Dense sketches are filtered before vectorization. The default filtered dataset is:
-
-```text
-data/processed/sketches_max_20000/
-```
-
-### 4. Stroke-5 Arrays
-
-The main pipeline writes stroke-5 arrays to:
-
-```text
-data/processed/stroke5/
-```
-
-Each file contains:
-
-```text
-stroke5: shape (N + 1, 5)
-```
-
-The columns are:
-
-| Column | Meaning |
-|---|---|
-| `dx` | X movement from previous point |
-| `dy` | Y movement from previous point |
-| `p1` | pen is drawing |
-| `p2` | pen lifts after this point |
-| `p3` | end-of-sketch marker |
-
-### 5. Sketch Token Codebook
-
-The K-means sketch-token codebook is written to:
-
-```text
-data/processed/sketch_token/codebook.npy
-data/processed/sketch_token/metadata.json
-```
-
-This mirrors Sketchformer's idea of building a dictionary before using a
-dictionary-based tokenizer.
-
-### 6. Token Sequences
-
-Encoded token sequences are written to:
-
-```text
-data/processed/tokens/
-```
-
-### 7. Sketchformer-Ready Data
-
-The Sketchformer preparation step writes chunked stroke3 data to:
-
-```text
-data/processed/sketchformer-ready-data/stroke3/
-```
-
-That folder contains files such as:
-
-```text
-train_000.npz
-train_001.npz
-valid.npz
-test.npz
-meta.npz
-```
+| `weights/` | Placeholder for pretrained and fine-tuned weights. |
 
 ## Requirements
 
 Use Python 3.10 or newer.
 
-Main dependencies include:
-
-- `controlnet-aux`
-- `opencv-python-headless`
-- `python-tsp`
-- `scipy`
-- `scikit-learn`
-- `numpy`
-- `matplotlib`
-- `Pillow`
-- `tqdm`
-- `python-dotenv`
-- `kagglehub`
-
-Install everything with:
+Python dependencies are installed from `requirements.txt`:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Optional but recommended:
+The dataset downloader also requires the system `rsync` binary. On
+Debian/Ubuntu:
 
 ```bash
-pip install -e .
+sudo apt install rsync
 ```
 
-`pip install -e .` uses `pyproject.toml` to make the project packages importable
-and to install shortcut commands such as `tts-run-pipeline`.
-
-## What `pyproject.toml` Does Here
-
-`pyproject.toml` is the project's Python packaging file.
-
-In this repo, it is used for three things:
-
-- tells Python how to install this repo in editable mode
-- exposes top-level packages like `pipeline`, `prep_data`, `metrics`, and `utils`
-- creates command shortcuts such as `tts-download-data` and `tts-run-pipeline`
-
-It does not replace `requirements.txt`.
-
-Use both:
+Install the project in editable mode to make the `tts-*` shortcuts available:
 
 ```bash
-pip install -r requirements.txt
 pip install -e .
 ```
 
 ## Setup
 
-### 1. Create a Virtual Environment
+Create and activate a virtual environment:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 ```
 
-### 2. Install Dependencies
+Install dependencies:
 
 ```bash
 pip install -r requirements.txt
 pip install -e .
 ```
 
-### 3. Configure Kaggle
-
-Use either Kaggle's JSON credentials:
+Create local environment config:
 
 ```bash
-mkdir -p ~/.kaggle
-cp kaggle.json ~/.kaggle/kaggle.json
-chmod 600 ~/.kaggle/kaggle.json
+cp .env.example .env
 ```
 
-Or environment variables:
-
-```bash
-export KAGGLE_USERNAME=your_username
-export KAGGLE_KEY=your_api_key
-```
-
-You can also create a `.env` file:
+The default `.env.example` points the pipeline at Danbooru2019 Portraits:
 
 ```env
-KAGGLE_USERNAME=your_username
-KAGGLE_KEY=your_api_key
-KAGGLE_DATASET=diraizel/anime-images-dataset
+DOWNLOAD_TARGET_DIR=data/raw/portraits
+DANBOORU2019_PORTRAITS_RSYNC_URL=rsync://176.9.41.242:873/biggan/portraits/
 
-DATA_RAW_DIR=data/raw
-INPUT_DIR=data/raw/data/anime_images
+INPUT_DIR=data/raw/portraits
 OUTPUT_DIR=data/processed/sketches
 
 DETECT_RES=512
@@ -333,104 +155,162 @@ IMAGE_RES=512
 MAX_PER_FOLDER=15
 ```
 
-## How To Run The Current Pipeline
+## Data Locations
 
-You can run commands through `scripts/` wrappers or through the `tts-*` commands
-installed by `pip install -e .`.
+| Stage | Default Path |
+|---|---|
+| Raw portrait images | `data/raw/portraits/` |
+| Download manifest | `data/raw/portraits/.danbooru2019-portraits-files.txt` |
+| Extracted sketches | `data/processed/sketches/` |
+| Filtered sketches | `data/processed/sketches_max_20000/` |
+| Filter report | `data/processed/sketch_point_filter_report.csv` |
+| Stroke-5 arrays | `data/processed/stroke5/` |
+| Sketch-token codebook | `data/processed/sketch_token/codebook.npy` |
+| Token sequences | `data/processed/tokens/` |
+| Sketchformer-ready chunks | `data/processed/sketchformer-ready-data/stroke3/` |
+| Evaluation outputs | `data/processed/evaluations/` |
 
-### Step 1: Download Data
+## Run The Pipeline
+
+You can use either the script paths or the installed `tts-*` shortcuts.
+
+### 1. Download Portrait Images
+
+Choose how many raw images should exist locally:
 
 ```bash
-python scripts/prepare_data/download_data.py
+python scripts/prepare_data/download_data.py --num-images 5000
 ```
 
-Shortcut:
+Equivalent shortcut:
 
 ```bash
-tts-download-data
+tts-download-data --num-images 5000
 ```
 
-### Step 2: Extract Line-Art Sketches
+The downloader lists the remote portrait images, checks local files by path and
+file size, skips complete images, and downloads only the missing remainder.
+
+Preview without downloading:
+
+```bash
+python scripts/prepare_data/download_data.py --num-images 5000 --dry-run
+```
+
+Limit bandwidth:
+
+```bash
+python scripts/prepare_data/download_data.py --num-images 5000 --bwlimit 5m
+```
+
+Override the destination or rsync source:
+
+```bash
+python scripts/prepare_data/download_data.py \
+  --num-images 5000 \
+  --target-dir data/raw/portraits \
+  --rsync-url rsync://176.9.41.242:873/biggan/portraits/
+```
+
+### 2. Extract Line-Art Sketches
 
 ```bash
 python scripts/prepare_data/extract_sketches.py
 ```
 
-With explicit paths:
+Equivalent shortcut:
+
+```bash
+tts-extract-sketches
+```
+
+With explicit settings:
 
 ```bash
 python scripts/prepare_data/extract_sketches.py \
-  --input-dir data/raw/data/anime_images \
+  --input-dir data/raw/portraits \
   --output-dir data/processed/sketches \
   --detect-resolution 512 \
   --image-resolution 512 \
   --max-per-folder 15
 ```
 
-Shortcut:
+Existing output sketches are skipped, so this step is resumable.
 
-```bash
-tts-extract-sketches
-```
-
-### Step 3: Filter Dense Sketches
+### 3. Filter Noisy Sketches
 
 ```bash
 python scripts/prepare_data/filter_sketches_by_points.py
 ```
 
-Default behavior:
-
-- reads from `data/processed/sketches/`
-- keeps sketches with at most 20,000 foreground points
-- writes kept sketches to `data/processed/sketches_max_20000/`
-- writes a CSV report to `data/processed/sketch_point_filter_report.csv`
-
-Shortcut:
+Equivalent shortcut:
 
 ```bash
 tts-filter-sketches
 ```
 
-### Step 4: Run The Main Pipeline
+Default behavior:
+
+- Reads sketches from `data/processed/sketches/`.
+- Keeps sketches with at most 20,000 foreground points.
+- Copies kept sketches to `data/processed/sketches_max_20000/`.
+- Writes `data/processed/sketch_point_filter_report.csv`.
+
+Useful options:
+
+```bash
+python scripts/prepare_data/filter_sketches_by_points.py \
+  --max-points 20000 \
+  --count original \
+  --limit 100
+```
+
+### 4. Vectorize, Order, Time, And Tokenize
 
 ```bash
 python scripts/run_pipeline.py
 ```
 
-Shortcut:
+Equivalent shortcut:
 
 ```bash
 tts-run-pipeline
 ```
 
-This step:
+This interactive command samples filtered sketches, asks how many to process,
+asks which ordering method to use, then writes:
 
-- samples sketches from `data/processed/sketches_max_20000/`
-- vectorizes each sketch
-- orders strokes
-- adds timing
-- saves stroke-5 arrays
-- builds the sketch-token codebook
-- saves token sequences
+- stroke-5 arrays under `data/processed/stroke5/`
+- sketch-token codebook under `data/processed/sketch_token/`
+- token sequences under `data/processed/tokens/`
 
-### Step 5: Prepare Sketchformer Stroke3 Data
+### 5. Prepare Sketchformer-Style Stroke3 Data
 
 ```bash
 python scripts/prepare_data/prepare_anime_data.py
 ```
 
-Shortcut:
+Equivalent shortcut:
 
 ```bash
 tts-prepare-sketchformer
 ```
 
-This converts stroke-5 arrays into Sketchformer-style stroke3 chunks.
+This converts stroke-5 arrays into chunked stroke3 data:
+
+```text
+data/processed/sketchformer-ready-data/stroke3/
+├── train_000.npz
+├── train_001.npz
+├── ...
+├── valid.npz
+├── test.npz
+└── meta.npz
+```
 
 ## Evaluation Commands
 
-### Compare Stroke Ordering
+Compare stroke ordering strategies:
 
 ```bash
 python scripts/metrics/evaluate_ordering.py --samples 20
@@ -442,13 +322,7 @@ Shortcut:
 tts-evaluate-ordering --samples 20
 ```
 
-Output:
-
-```text
-data/processed/evaluations/
-```
-
-### Evaluate Token Encoder / Decoder
+Evaluate sketch-token encoding and decoding:
 
 ```bash
 python scripts/metrics/evaluate_encoder.py
@@ -460,10 +334,7 @@ Shortcut:
 tts-evaluate-encoder
 ```
 
-This checks how much error is introduced when stroke-5 data is encoded into
-tokens and decoded back.
-
-### Compare RDP Epsilon
+Compare RDP simplification on dense sketches:
 
 ```bash
 python scripts/metrics/compare_rdp_epsilon.py
@@ -475,23 +346,26 @@ Shortcut:
 tts-compare-rdp
 ```
 
-Default output:
+## Formats
 
-```text
-data/processed/rdp_epsilon_0_5/
-```
+### Stroke-5
 
-## Important Formats
-
-### stroke-5
-
-Stroke-5 is the current main vector format used by this preprocessing pipeline.
+Stroke-5 is the main vector format produced by this preprocessing pipeline.
+Each `.npz` file contains a `stroke5` array with shape `(N + 1, 5)`.
 
 ```text
 [dx, dy, p1, p2, p3]
 ```
 
-Example loading code:
+| Column | Meaning |
+|---|---|
+| `dx` | X movement from the previous point. |
+| `dy` | Y movement from the previous point. |
+| `p1` | Pen is drawing. |
+| `p2` | Pen lifts after this point. |
+| `p3` | End-of-sketch marker. |
+
+Example:
 
 ```python
 from utils.io import load_stroke5
@@ -499,42 +373,25 @@ from utils.io import load_stroke5
 s5 = load_stroke5("data/processed/stroke5/example.npz")
 ```
 
-### stroke3
+### Stroke3
 
-Stroke3 is the Sketchformer-style format prepared for training.
+Stroke3 is the Sketchformer-style training format:
 
 ```text
 [dx, dy, pen_state]
 ```
 
-The conversion happens in:
-
-```text
-prep_data/prepare_sketchformer.py
-```
+`prep_data/prepare_sketchformer.py` converts stroke-5 files into stroke3
+train/valid/test chunks.
 
 ### Sketch Tokens
 
 Sketch tokens are integer IDs produced by quantizing `[dx, dy]` movements with
 a K-means codebook.
 
-The codebook is created in:
-
-```text
-prep_data/sketch_token/create_token_dict.py
-```
-
-Encoding and decoding are in:
-
-```text
-utils/tokenizer.py
-```
-
-Example:
-
 ```python
 from utils.io import load_codebook, load_stroke5
-from utils.tokenizer import encode_stroke5, decode_tokens
+from utils.tokenizer import decode_tokens, encode_stroke5
 
 stroke5 = load_stroke5("data/processed/stroke5/example.npz")
 codebook = load_codebook("data/processed/sketch_token/codebook.npy")
@@ -547,49 +404,22 @@ reconstructed = decode_tokens(tokens, codebook)
 
 | Task | Script | Shortcut |
 |---|---|---|
-| Download dataset | `python scripts/prepare_data/download_data.py` | `tts-download-data` |
+| Download portraits | `python scripts/prepare_data/download_data.py --num-images 5000` | `tts-download-data --num-images 5000` |
 | Extract line-art | `python scripts/prepare_data/extract_sketches.py` | `tts-extract-sketches` |
 | Filter sketches | `python scripts/prepare_data/filter_sketches_by_points.py` | `tts-filter-sketches` |
-| Run full pipeline | `python scripts/run_pipeline.py` | `tts-run-pipeline` |
-| Prepare Sketchformer data | `python scripts/prepare_data/prepare_anime_data.py` | `tts-prepare-sketchformer` |
-| Evaluate ordering | `python scripts/metrics/evaluate_ordering.py` | `tts-evaluate-ordering` |
-| Evaluate token encoder | `python scripts/metrics/evaluate_encoder.py` | `tts-evaluate-encoder` |
+| Run main pipeline | `python scripts/run_pipeline.py` | `tts-run-pipeline` |
+| Prepare stroke3 data | `python scripts/prepare_data/prepare_anime_data.py` | `tts-prepare-sketchformer` |
+| Evaluate ordering | `python scripts/metrics/evaluate_ordering.py --samples 20` | `tts-evaluate-ordering --samples 20` |
+| Evaluate encoder | `python scripts/metrics/evaluate_encoder.py` | `tts-evaluate-encoder` |
 | Compare RDP epsilon | `python scripts/metrics/compare_rdp_epsilon.py` | `tts-compare-rdp` |
-
-## Current Status
-
-Implemented now:
-
-- image download
-- line-art extraction
-- sketch filtering
-- vectorization
-- stroke ordering
-- kinematics
-- stroke-5 export
-- sketch-token codebook generation
-- token encoding / decoding
-- stroke5-to-stroke3 preparation
-- simple metrics and visual reports
-
-Prepared for future work:
-
-- `dataloaders/`
-- `models/`
-- `builders/`
-- `core/`
-- `experiments/`
-- `dependencies/`
-- `weights/`
-
-These folders are intentionally present because the project is moving toward
-Sketchformer fine-tuning and eventual Sketchformer-style replication.
 
 ## Notes
 
-- `data/`, `weights/`, `.env`, `.venv`, and `sketchformer/` are local/runtime
-  folders and should not be committed with generated artifacts.
-- `scripts/` contains wrappers. The real implementation lives in folders such
-  as `pipeline/`, `prep_data/`, `metrics/`, and `utils/`.
-- The local `sketchformer/` folder is treated as an external reference checkout.
-  This project is being organized to become compatible with that style over time.
+- `.env` is local and ignored by git. Commit `.env.example` instead.
+- `data/`, `.venv/`, `sketchformer/`, and generated weights are local/runtime
+  artifacts.
+- The downloader uses `rsync --list-only` plus `--files-from` to fetch a limited
+  number of portrait images.
+- The line-art extractor may download ControlNet annotator weights the first
+  time it runs.
+- The current project prepares data; it does not train a model yet.
