@@ -194,7 +194,7 @@ MAX_PER_FOLDER=15
 | Raw portrait images | `data/raw/portraits/` |
 | Download manifest | `data/raw/portraits/.danbooru2019-portraits-files.txt` |
 | Extracted sketches | `data/processed/sketches/` |
-| Filtered sketches | `data/processed/sketches_max_20000/` |
+| Filtered sketches | `data/processed/sketches_filtered/` |
 | Filter report | `data/processed/sketch_point_filter_report.csv` |
 | Stroke-5 arrays | `data/processed/stroke5/` |
 | Sketch-token codebook | `data/processed/sketch_token/codebook.npy` |
@@ -284,15 +284,15 @@ tts-filter-sketches
 Default behavior:
 
 - Reads sketches from `data/processed/sketches/`.
-- Keeps sketches with at most 20,000 foreground points.
-- Copies kept sketches to `data/processed/sketches_max_20000/`.
+- Keeps sketches at or below the user-selected `--max-points` threshold.
+- Copies kept sketches to `data/processed/sketches_filtered/`.
 - Writes `data/processed/sketch_point_filter_report.csv`.
 
 Useful options:
 
 ```bash
 python scripts/prepare_data/filter_sketches_by_points.py \
-  --max-points 20000 \
+  --max-points 10000 \
   --count original \
   --limit 100
 ```
