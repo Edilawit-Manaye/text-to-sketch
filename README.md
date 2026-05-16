@@ -95,7 +95,8 @@ text-to-sketch/
 ├── experiments/
 │   └── __init__.py
 ├── dependencies/
-│   └── README.md
+│   ├── README.md
+│   └── Anime2Sketch/          # optional local checkout, git-ignored
 │
 ├── data/
 ├── weights/
@@ -125,6 +126,7 @@ text-to-sketch/
 | `models/` | Reserved for in-repo Sketchformer or Sketchformer-inspired model implementations. |
 | `experiments/` | Reserved for fine-tuning configs, ablations, and experiment entry points. |
 | `dependencies/` | Environment notes and integration docs for training dependencies. |
+| `dependencies/Anime2Sketch/` | Optional local Anime2Sketch checkout, virtualenv, and weights. This is git-ignored. |
 | `data/` | Local generated data. This is git-ignored. |
 | `weights/` | Placeholder for pretrained and fine-tuned weights. |
 | `sketchformer/` | External Sketchformer checkout for near-term fine-tuning feasibility validation. |
@@ -152,10 +154,11 @@ Install the project in editable mode to make the `tts-*` shortcuts available:
 pip install -e .
 ```
 
-Anime2Sketch is optional. When using `--extractor anime2sketch`, keep a local
-Mukosame/Anime2Sketch checkout and its pretrained weights under a path such as
-`dependencies/Anime2Sketch`, then point `ANIME2SKETCH_DIR` or
-`--anime2sketch-dir` at that checkout.
+Anime2Sketch is optional and is intentionally kept outside git. When using
+`--extractor anime2sketch`, keep a local Mukosame/Anime2Sketch checkout, its
+own virtualenv, and its pretrained weights under `dependencies/Anime2Sketch/`.
+The main pipeline calls that checkout through `--anime2sketch-python`, so the
+project environment and Anime2Sketch environment can stay separate.
 
 ## Setup
 
@@ -194,11 +197,22 @@ IMAGE_RES=512
 MAX_IMAGES=15
 
 # Optional Anime2Sketch extractor settings
-# ANIME2SKETCH_DIR=dependencies/Anime2Sketch
-# ANIME2SKETCH_PYTHON=.venv/bin/python
-# ANIME2SKETCH_MODEL=default
-# ANIME2SKETCH_GPU_IDS=
-# ANIME2SKETCH_CLAHE_CLIP=-1
+# Anime2Sketch is an ignored local dependency, so clone/install it manually:
+#   dependencies/Anime2Sketch/
+#
+# Expected local weight files:
+#   dependencies/Anime2Sketch/weights/netG.pth
+#   dependencies/Anime2Sketch/weights/improved.bin
+#
+# To use it, copy this file to .env and change:
+#   SKETCH_EXTRACTOR=anime2sketch
+ANIME2SKETCH_DIR=dependencies/Anime2Sketch
+ANIME2SKETCH_PYTHON=dependencies/Anime2Sketch/.venv/bin/python
+
+# Choices: default uses weights/netG.pth, improved uses weights/improved.bin.
+ANIME2SKETCH_MODEL=improved
+ANIME2SKETCH_GPU_IDS=
+ANIME2SKETCH_CLAHE_CLIP=-1
 ```
 
 ## Data Locations
@@ -210,6 +224,8 @@ MAX_IMAGES=15
 | Extracted sketches | `data/processed/sketches/<extractor_name>/` |
 | ControlNet sketches | `data/processed/sketches/lineart_anime/` |
 | Anime2Sketch sketches | `data/processed/sketches/anime2sketch/` |
+| Anime2Sketch checkout | `dependencies/Anime2Sketch/` local and git-ignored |
+| Anime2Sketch weights | `dependencies/Anime2Sketch/weights/netG.pth` and `dependencies/Anime2Sketch/weights/improved.bin` |
 | Filtered sketches | `data/processed/sketches_filtered/` |
 | Filter report | `data/processed/sketch_point_filter_report.csv` |
 | Stroke-5 arrays | `data/processed/stroke5/` |
@@ -262,7 +278,25 @@ python scripts/prepare_data/download_data.py \
 
 ### 2. Extract Line-Art Sketches
 
-ControlNet `LineartAnimeDetector` remains the default baseline:
+The extraction stage supports two sketch extractors:
+
+| Extractor | Status | Output Folder |
+|---|---|---|
+| `lineart-anime` | Default ControlNet `LineartAnimeDetector` baseline. | `data/processed/sketches/lineart_anime/` |
+| `anime2sketch` | Optional local Anime2Sketch checkout. | `data/processed/sketches/anime2sketch/` |
+
+The input portraits are treated as one flat image pool. `--max-images` limits
+the number of new sketches created in the current run. Existing output files
+are skipped before the limit is applied, so interrupted runs can be resumed
+without regenerating sketches.
+
+For example, if 100 raw portraits exist, 40 Anime2Sketch outputs already exist,
+and you run `--max-images 20`, the command creates 20 more sketches from the
+remaining 60 missing outputs.
+
+#### ControlNet Baseline
+
+ControlNet remains the default:
 
 ```bash
 python scripts/prepare_data/extract_sketches.py
@@ -280,7 +314,7 @@ By default, outputs are namespaced by extractor:
 data/processed/sketches/lineart_anime/
 ```
 
-With explicit settings:
+Run with explicit settings:
 
 ```bash
 python scripts/prepare_data/extract_sketches.py \
@@ -292,24 +326,80 @@ python scripts/prepare_data/extract_sketches.py \
   --max-images 15
 ```
 
-Danbooru2019 Portraits is treated as one flat image pool. `--max-images`
-limits the number of new pending images processed in this run; existing output
-sketches are skipped before the limit is applied, so this step is resumable.
+Use `--max-images 0` to process every pending image.
 
-To test Anime2Sketch on the same input images, first prepare a local
-Mukosame/Anime2Sketch checkout and pretrained weights, then run:
+#### Anime2Sketch
+
+Anime2Sketch is an optional external extractor. It is ignored by git, so each
+machine that wants to use it must prepare its own local checkout and weights.
+
+Clone and install it into a separate virtualenv:
+
+```bash
+mkdir -p dependencies
+git clone https://github.com/Mukosame/Anime2Sketch.git dependencies/Anime2Sketch
+cd dependencies/Anime2Sketch
+python -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install -r requirements.txt
+cd ../..
+```
+
+Place the model files in the checkout:
+
+```text
+dependencies/Anime2Sketch/weights/netG.pth
+dependencies/Anime2Sketch/weights/improved.bin
+```
+
+The `default` model uses `netG.pth`. The `improved` model uses `improved.bin`
+and is the better starting point for darker or lower-contrast portraits.
+
+Run Anime2Sketch through the main project environment, while pointing to the
+Anime2Sketch environment:
 
 ```bash
 python scripts/prepare_data/extract_sketches.py \
+  --input-dir data/raw/portraits \
+  --output-dir data/processed/sketches \
   --extractor anime2sketch \
   --anime2sketch-dir dependencies/Anime2Sketch \
-  --anime2sketch-model default
+  --anime2sketch-python dependencies/Anime2Sketch/.venv/bin/python \
+  --anime2sketch-model improved \
+  --anime2sketch-gpu-ids "" \
+  --image-resolution 512 \
+  --max-images 20
 ```
+
+For the default Anime2Sketch weights, change only the model flag:
+
+```bash
+--anime2sketch-model default
+```
+
+On CPU-only machines, keep `--anime2sketch-gpu-ids ""`.
 
 Anime2Sketch outputs are written separately:
 
 ```text
 data/processed/sketches/anime2sketch/
+```
+
+To compare extractors fairly, run both extractors over the same portrait set and
+inspect their separate output folders:
+
+```bash
+python scripts/prepare_data/extract_sketches.py \
+  --extractor lineart-anime \
+  --max-images 20
+
+python scripts/prepare_data/extract_sketches.py \
+  --extractor anime2sketch \
+  --anime2sketch-dir dependencies/Anime2Sketch \
+  --anime2sketch-python dependencies/Anime2Sketch/.venv/bin/python \
+  --anime2sketch-model improved \
+  --anime2sketch-gpu-ids "" \
+  --max-images 20
 ```
 
 Use `--flat-output` only when you intentionally want to write directly into
@@ -335,6 +425,16 @@ Default behavior:
 - Keeps sketches at or below the user-selected `--max-points` threshold.
 - Copies kept sketches to `data/processed/sketches_filtered/`.
 - Writes `data/processed/sketch_point_filter_report.csv`.
+
+To filter only one extractor, point `--input-dir` and `--output-dir` at that
+extractor's folder:
+
+```bash
+python scripts/prepare_data/filter_sketches_by_points.py \
+  --input-dir data/processed/sketches/anime2sketch \
+  --output-dir data/processed/sketches_filtered/anime2sketch \
+  --max-points 10000
+```
 
 Useful options:
 
@@ -485,8 +585,8 @@ reconstructed = decode_tokens(tokens, codebook)
 | Task | Script | Shortcut |
 |---|---|---|
 | Download portraits | `python scripts/prepare_data/download_data.py --num-images 5000` | `tts-download-data --num-images 5000` |
-| Extract ControlNet line-art | `python scripts/prepare_data/extract_sketches.py --extractor lineart-anime` | `tts-extract-sketches --extractor lineart-anime` |
-| Extract Anime2Sketch line-art | `python scripts/prepare_data/extract_sketches.py --extractor anime2sketch --anime2sketch-dir dependencies/Anime2Sketch` | `tts-extract-sketches --extractor anime2sketch --anime2sketch-dir dependencies/Anime2Sketch` |
+| Extract ControlNet line-art | `python scripts/prepare_data/extract_sketches.py --extractor lineart-anime --max-images 20` | `tts-extract-sketches --extractor lineart-anime --max-images 20` |
+| Extract Anime2Sketch line-art | `python scripts/prepare_data/extract_sketches.py --extractor anime2sketch --anime2sketch-dir dependencies/Anime2Sketch --anime2sketch-python dependencies/Anime2Sketch/.venv/bin/python --anime2sketch-model improved --anime2sketch-gpu-ids "" --max-images 20` | `tts-extract-sketches --extractor anime2sketch --anime2sketch-dir dependencies/Anime2Sketch --anime2sketch-python dependencies/Anime2Sketch/.venv/bin/python --anime2sketch-model improved --anime2sketch-gpu-ids "" --max-images 20` |
 | Filter sketches | `python scripts/prepare_data/filter_sketches_by_points.py` | `tts-filter-sketches` |
 | Run main pipeline | `python scripts/run_pipeline.py` | `tts-run-pipeline` |
 | Prepare stroke3 data | `python scripts/prepare_data/prepare_anime_data.py` | `tts-prepare-sketchformer` |
@@ -494,15 +594,3 @@ reconstructed = decode_tokens(tokens, codebook)
 | Evaluate encoder | `python scripts/metrics/evaluate_encoder.py` | `tts-evaluate-encoder` |
 | Compare RDP epsilon | `python scripts/metrics/compare_rdp_epsilon.py` | `tts-compare-rdp` |
 
-## Notes
-
-- `.env` is local and ignored by git. Commit `.env.example` instead.
-- `data/`, `.venv/`, `sketchformer/`, and generated weights are local/runtime
-  artifacts.
-- The downloader uses `rsync --list-only` plus `--files-from` to fetch a limited
-  number of portrait images.
-- The default line-art extractor may download ControlNet annotator weights the
-  first time it runs.
-- Anime2Sketch is optional and uses a local external checkout; ControlNet stays
-  available as the default baseline.
-- The current project prepares data; it does not train a model yet.
