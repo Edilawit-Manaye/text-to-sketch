@@ -594,20 +594,3 @@ reconstructed = decode_tokens(tokens, codebook)
 | Evaluate encoder | `python scripts/metrics/evaluate_encoder.py` | `tts-evaluate-encoder` |
 | Compare RDP epsilon | `python scripts/metrics/compare_rdp_epsilon.py` | `tts-compare-rdp` |
 
-## Notes
-
-- `.env` is local and ignored by git. Commit `.env.example` instead.
-- `data/`, `.venv/`, `sketchformer/`, `dependencies/Anime2Sketch/`, and
-  generated weights are local/runtime artifacts.
-- The downloader uses `rsync --list-only` plus `--files-from` to fetch a limited
-  number of portrait images.
-- The default line-art extractor may download ControlNet annotator weights the
-  first time it runs.
-- Anime2Sketch is optional and uses a local external checkout; ControlNet stays
-  available as the default baseline.
-- `--max-images` limits new sketches to create, not raw files to scan. Existing
-  output sketches are skipped. Delete an output `.png` when you intentionally
-  want to regenerate it.
-- `--max-per-folder` is still accepted as a hidden compatibility alias, but new
-  commands should use `--max-images`.
-- The current project prepares data; it does not train a model yet.
