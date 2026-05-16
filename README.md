@@ -25,6 +25,7 @@ Danbooru2019 Portraits
 - Download a user-selected number of Danbooru2019 Portraits images over `rsync`.
 - Skip already-installed images and resume incomplete downloads.
 - Extract binary anime line-art sketches with ControlNet's `LineartAnimeDetector`.
+- Optionally extract sketches with a local Anime2Sketch checkout for comparison.
 - Filter sketches by foreground point count before vectorization.
 - Vectorize sketches into OpenCV contour strokes with RDP simplification.
 - Order strokes with directional, greedy nearest-neighbor, or TSP-style ordering.
@@ -151,6 +152,11 @@ Install the project in editable mode to make the `tts-*` shortcuts available:
 pip install -e .
 ```
 
+Anime2Sketch is optional. When using `--extractor anime2sketch`, keep a local
+Mukosame/Anime2Sketch checkout and its pretrained weights under a path such as
+`dependencies/Anime2Sketch`, then point `ANIME2SKETCH_DIR` or
+`--anime2sketch-dir` at that checkout.
+
 ## Setup
 
 Create and activate a virtual environment:
@@ -181,10 +187,18 @@ DANBOORU2019_PORTRAITS_RSYNC_URL=rsync://176.9.41.242:873/biggan/portraits/
 
 INPUT_DIR=data/raw/portraits
 OUTPUT_DIR=data/processed/sketches
+SKETCH_EXTRACTOR=lineart-anime
 
 DETECT_RES=512
 IMAGE_RES=512
-MAX_PER_FOLDER=15
+MAX_IMAGES=15
+
+# Optional Anime2Sketch extractor settings
+# ANIME2SKETCH_DIR=dependencies/Anime2Sketch
+# ANIME2SKETCH_PYTHON=.venv/bin/python
+# ANIME2SKETCH_MODEL=default
+# ANIME2SKETCH_GPU_IDS=
+# ANIME2SKETCH_CLAHE_CLIP=-1
 ```
 
 ## Data Locations
@@ -193,7 +207,9 @@ MAX_PER_FOLDER=15
 |---|---|
 | Raw portrait images | `data/raw/portraits/` |
 | Download manifest | `data/raw/portraits/.danbooru2019-portraits-files.txt` |
-| Extracted sketches | `data/processed/sketches/` |
+| Extracted sketches | `data/processed/sketches/<extractor_name>/` |
+| ControlNet sketches | `data/processed/sketches/lineart_anime/` |
+| Anime2Sketch sketches | `data/processed/sketches/anime2sketch/` |
 | Filtered sketches | `data/processed/sketches_filtered/` |
 | Filter report | `data/processed/sketch_point_filter_report.csv` |
 | Stroke-5 arrays | `data/processed/stroke5/` |
@@ -246,6 +262,8 @@ python scripts/prepare_data/download_data.py \
 
 ### 2. Extract Line-Art Sketches
 
+ControlNet `LineartAnimeDetector` remains the default baseline:
+
 ```bash
 python scripts/prepare_data/extract_sketches.py
 ```
@@ -256,18 +274,46 @@ Equivalent shortcut:
 tts-extract-sketches
 ```
 
+By default, outputs are namespaced by extractor:
+
+```text
+data/processed/sketches/lineart_anime/
+```
+
 With explicit settings:
 
 ```bash
 python scripts/prepare_data/extract_sketches.py \
   --input-dir data/raw/portraits \
   --output-dir data/processed/sketches \
+  --extractor lineart-anime \
   --detect-resolution 512 \
   --image-resolution 512 \
-  --max-per-folder 15
+  --max-images 15
 ```
 
-Existing output sketches are skipped, so this step is resumable.
+Danbooru2019 Portraits is treated as one flat image pool. `--max-images`
+limits the number of new pending images processed in this run; existing output
+sketches are skipped before the limit is applied, so this step is resumable.
+
+To test Anime2Sketch on the same input images, first prepare a local
+Mukosame/Anime2Sketch checkout and pretrained weights, then run:
+
+```bash
+python scripts/prepare_data/extract_sketches.py \
+  --extractor anime2sketch \
+  --anime2sketch-dir dependencies/Anime2Sketch \
+  --anime2sketch-model default
+```
+
+Anime2Sketch outputs are written separately:
+
+```text
+data/processed/sketches/anime2sketch/
+```
+
+Use `--flat-output` only when you intentionally want to write directly into
+`--output-dir` without the extractor subfolder.
 
 ### 3. Filter Noisy Sketches
 
@@ -284,6 +330,8 @@ tts-filter-sketches
 Default behavior:
 
 - Reads sketches from `data/processed/sketches/`.
+- Recursively includes extractor-specific subfolders such as `lineart_anime/`
+  and `anime2sketch/`.
 - Keeps sketches at or below the user-selected `--max-points` threshold.
 - Copies kept sketches to `data/processed/sketches_filtered/`.
 - Writes `data/processed/sketch_point_filter_report.csv`.
@@ -437,10 +485,24 @@ reconstructed = decode_tokens(tokens, codebook)
 | Task | Script | Shortcut |
 |---|---|---|
 | Download portraits | `python scripts/prepare_data/download_data.py --num-images 5000` | `tts-download-data --num-images 5000` |
-| Extract line-art | `python scripts/prepare_data/extract_sketches.py` | `tts-extract-sketches` |
+| Extract ControlNet line-art | `python scripts/prepare_data/extract_sketches.py --extractor lineart-anime` | `tts-extract-sketches --extractor lineart-anime` |
+| Extract Anime2Sketch line-art | `python scripts/prepare_data/extract_sketches.py --extractor anime2sketch --anime2sketch-dir dependencies/Anime2Sketch` | `tts-extract-sketches --extractor anime2sketch --anime2sketch-dir dependencies/Anime2Sketch` |
 | Filter sketches | `python scripts/prepare_data/filter_sketches_by_points.py` | `tts-filter-sketches` |
 | Run main pipeline | `python scripts/run_pipeline.py` | `tts-run-pipeline` |
 | Prepare stroke3 data | `python scripts/prepare_data/prepare_anime_data.py` | `tts-prepare-sketchformer` |
 | Evaluate ordering | `python scripts/metrics/evaluate_ordering.py --samples 20` | `tts-evaluate-ordering --samples 20` |
 | Evaluate encoder | `python scripts/metrics/evaluate_encoder.py` | `tts-evaluate-encoder` |
 | Compare RDP epsilon | `python scripts/metrics/compare_rdp_epsilon.py` | `tts-compare-rdp` |
+
+## Notes
+
+- `.env` is local and ignored by git. Commit `.env.example` instead.
+- `data/`, `.venv/`, `sketchformer/`, and generated weights are local/runtime
+  artifacts.
+- The downloader uses `rsync --list-only` plus `--files-from` to fetch a limited
+  number of portrait images.
+- The default line-art extractor may download ControlNet annotator weights the
+  first time it runs.
+- Anime2Sketch is optional and uses a local external checkout; ControlNet stays
+  available as the default baseline.
+- The current project prepares data; it does not train a model yet.
