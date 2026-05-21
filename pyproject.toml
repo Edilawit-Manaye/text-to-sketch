@@ -15,6 +15,7 @@ tts-extract-sketches = "prep_data.extract_sketches:main"
 tts-filter-sketches = "prep_data.filter_sketches:main"
 tts-prepare-sketchformer = "prep_data.prepare_sketchformer:main"
 tts-run-pipeline = "pipeline.run_pipeline:main"
+tts-sketchformer-codebase-finetune = "integrations.original_sketchformer.launcher:main"
 tts-compare-rdp = "metrics.compare_rdp_epsilon:main"
 tts-evaluate-encoder = "metrics.evaluate_encoder:main"
 tts-evaluate-ordering = "metrics.evaluate_ordering:main"
@@ -26,6 +27,8 @@ include = [
   "core",
   "dataloaders",
   "experiments",
+  "integrations",
+  "integrations.*",
   "metrics",
   "models",
   "pipeline",

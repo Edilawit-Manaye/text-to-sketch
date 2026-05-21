@@ -22,11 +22,9 @@ ENV LANG=en_US.UTF-8
 ENV TERM=xterm-256color
 
 WORKDIR /src
-COPY ./requirements.txt ./
-COPY ./git-requirements.txt ./
+COPY ./requirements.txt ./requirements-cpu.txt
+COPY ./git-requirements.txt ./git-requirements.txt
 
 RUN python -m pip install --upgrade "pip<21" "setuptools<45" wheel
-RUN grep -v '^tensorflow-gpu' requirements.txt \
-    | sed 's/^tensorflow_addons.*/tensorflow_addons==0.8.3/' > requirements-cpu.txt && \
-    python -m pip install -r requirements-cpu.txt && \
+RUN python -m pip install -r requirements-cpu.txt && \
     python -m pip install -r git-requirements.txt
