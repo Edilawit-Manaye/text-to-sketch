@@ -35,7 +35,9 @@ Danbooru2019 Portraits
 - Convert stroke-5 arrays into Sketchformer-style stroke3 train/valid/test chunks.
 - Generate basic evaluation reports and visualizations.
 
-Model training code is not implemented yet.
+In-repo model training code is not implemented yet. Near-term fine-tuning is
+handled through the Sketchformer codebase fine-tuning handoff to the original
+`sketchformer/` checkout.
 
 ## Project Layout
 
@@ -97,6 +99,10 @@ text-to-sketch/
 ├── dependencies/
 │   ├── README.md
 │   └── Anime2Sketch/          # optional local checkout, git-ignored
+├── integrations/
+│   └── original_sketchformer/
+│       ├── launcher.py
+│       └── docker/
 │
 ├── data/
 ├── weights/
@@ -127,6 +133,7 @@ text-to-sketch/
 | `experiments/` | Reserved for fine-tuning configs, ablations, and experiment entry points. |
 | `dependencies/` | Environment notes and integration docs for training dependencies. |
 | `dependencies/Anime2Sketch/` | Optional local Anime2Sketch checkout, virtualenv, and weights. This is git-ignored. |
+| `integrations/original_sketchformer/` | Adapter that launches the original Sketchformer checkout for fine-tuning and evaluation. |
 | `data/` | Local generated data. This is git-ignored. |
 | `weights/` | Placeholder for pretrained and fine-tuned weights. |
 | `sketchformer/` | External Sketchformer checkout for near-term fine-tuning feasibility validation. |
@@ -488,6 +495,85 @@ data/processed/sketchformer-ready-data/stroke3/
 └── meta.npz
 ```
 
+## Sketchformer Codebase Fine-Tuning
+
+Near-term fine-tuning follows a strict handoff to the original Sketchformer
+codebase:
+
+```text
+Text-to-Sketch pipeline
+  -> cleaned sketches
+  -> stroke5 files
+  -> Sketchformer-compatible stroke3 chunks
+  -> handoff
+
+Original sketchformer/ checkout
+  -> dataloader
+  -> model architecture
+  -> losses and masks
+  -> pretrained checkpoint loading
+  -> fine-tuning and evaluation
+```
+
+The Text-to-Sketch code does not reimplement Sketchformer's model, dataloader,
+losses, masks, or checkpoint structure in this workflow. It only prepares the
+data and launches the original Sketchformer code through
+`integrations/original_sketchformer/` in a legacy TensorFlow 2.1 Docker
+environment.
+
+Build the CPU image:
+
+```bash
+python scripts/sketchformer_codebase_finetune.py --sudo build-image
+```
+
+Write legacy NumPy-compatible stroke3 chunks from existing stroke5 data:
+
+```bash
+python scripts/sketchformer_codebase_finetune.py --sudo prepare-data \
+  --source-dir data/processed/stroke5 \
+  --target-dir data/processed/sketchformer-ready-data/stroke3 \
+  --n-chunks 10 \
+  --n-classes 345
+```
+
+For a tiny smoke test, add `--min-valid-size 18` so the original reconstruction
+plotter has enough validation samples for its fixed grid.
+
+Evaluate the pretrained continuous checkpoint:
+
+```bash
+python scripts/sketchformer_codebase_finetune.py --sudo evaluate-reconstruction \
+  --dataset data/processed/sketchformer-ready-data/stroke3 \
+  --output-dir weights/pretrained \
+  --model-id cvpr_tform_cont \
+  --resume weights/pretrained/sketch-transformer-tf2-cvpr_tform_cont/weights/ckpt-12
+```
+
+Fine-tune the continuous checkpoint:
+
+```bash
+python scripts/sketchformer_codebase_finetune.py --sudo finetune-continuous \
+  --dataset data/processed/sketchformer-ready-data/stroke3 \
+  --output-dir weights/finetuned \
+  --run-id anime-continuous-finetune \
+  --resume weights/pretrained/sketch-transformer-tf2-cvpr_tform_cont/weights/ckpt-12
+```
+
+The default fine-tuning command keeps Sketchformer's classifier layer present
+for checkpoint compatibility but sets `class_weight=0.0`, so unlabeled anime
+data is optimized through reconstruction rather than dummy classification.
+
+Use `--dry-run` before any launcher command to print the Docker command without
+executing it:
+
+```bash
+python scripts/sketchformer_codebase_finetune.py --sudo --dry-run finetune-continuous
+```
+
+Detailed notes live in
+`study/fine-tune-strategy/sketchformer_codebase_finetuning.md`.
+
 ## Evaluation Commands
 
 Compare stroke ordering strategies:
@@ -590,7 +676,7 @@ reconstructed = decode_tokens(tokens, codebook)
 | Filter sketches | `python scripts/prepare_data/filter_sketches_by_points.py` | `tts-filter-sketches` |
 | Run main pipeline | `python scripts/run_pipeline.py` | `tts-run-pipeline` |
 | Prepare stroke3 data | `python scripts/prepare_data/prepare_anime_data.py` | `tts-prepare-sketchformer` |
+| Sketchformer codebase fine-tuning | `python scripts/sketchformer_codebase_finetune.py --sudo --dry-run finetune-continuous` | `tts-sketchformer-codebase-finetune --sudo --dry-run finetune-continuous` |
 | Evaluate ordering | `python scripts/metrics/evaluate_ordering.py --samples 20` | `tts-evaluate-ordering --samples 20` |
 | Evaluate encoder | `python scripts/metrics/evaluate_encoder.py` | `tts-evaluate-encoder` |
 | Compare RDP epsilon | `python scripts/metrics/compare_rdp_epsilon.py` | `tts-compare-rdp` |
-
