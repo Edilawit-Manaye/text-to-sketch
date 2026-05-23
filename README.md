@@ -519,7 +519,7 @@ The Text-to-Sketch code does not reimplement Sketchformer's model, dataloader,
 losses, masks, or checkpoint structure in this workflow. It only prepares the
 data and launches the original Sketchformer code through
 `integrations/original_sketchformer/` in a legacy TensorFlow 2.1 Docker
-environment.
+environment.launcher
 
 Build the CPU image:
 

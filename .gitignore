@@ -13,6 +13,5 @@ weights/*
 !weights/pretrained/.gitkeep
 !weights/finetuned/
 !weights/finetuned/.gitkeep
-docs
-weights/finetuned/
 weights/pretrained/
+weights/finetuned/
