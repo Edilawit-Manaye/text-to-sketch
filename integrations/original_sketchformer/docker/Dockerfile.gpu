@@ -1,6 +1,6 @@
-FROM tensorflow/tensorflow:2.10.configure-gpu 
+FROM tensorflow/tensorflow:2.10.1-gpu
 
-ENV DEBIAN_FRONTEND=noninteractive 
+ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update -y && apt-get install -y \
   build-essential \
@@ -27,7 +27,5 @@ COPY ./git-requirements.txt ./git-requirements.txt
 
 
 RUN python -m pip install --upgrade pip wheel
-RUN python -m install -r requirements-gpu.txt && \
+RUN python -m pip install -r requirements-gpu.txt && \
   python -m pip install -r git-requirements.txt
-
-

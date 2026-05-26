@@ -15,6 +15,9 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_IMAGE = "sketchformer-tf2-cpu"
+DEFAULT_GPU_IMAGE = "sketchformer-tf2-gpu"
+DEFAULT_DOCKERFILE = "integrations/original_sketchformer/docker/Dockerfile.cpu"
+DEFAULT_GPU_DOCKERFILE = "integrations/original_sketchformer/docker/Dockerfile.gpu"
 DEFAULT_DATASET = "data/processed/sketchformer-ready-data/stroke3"
 DEFAULT_SOURCE_STROKE5 = "data/processed/stroke5"
 DEFAULT_PRETRAINED_OUTPUT = "weights/pretrained"
@@ -25,6 +28,7 @@ DEFAULT_CONTINUOUS_RESUME = (
 
 # default legacy maximum sequence length
 DEFAULT_LEGACY_MAX_SEQ_LEN = 200
+DEFAULT_MAX_POSITION_ENCODING = 1000
 
 
 def project_path(path: str) -> Path:
@@ -63,9 +67,13 @@ def docker_run(args: argparse.Namespace, workdir: str) -> list[str]:
         "run",
         "--rm",
         "-v",
-        "{}:/workspace".format(PROJECT_ROOT)
+        "{}:/workspace".format(PROJECT_ROOT),
+        "-w",
+        workdir,
     ]
-       # gpu execution command
+    if args.shm_size:
+        command += ["--shm-size", args.shm_size]
+    # gpu execution command
     if args.gpus:
         command += ["--gpus", args.gpus]
     command.append(args.image)
@@ -80,10 +88,50 @@ def run_or_print(command: list[str], dry_run: bool) -> int:
     print("[Sketchformer codebase fine-tuning] {}".format(printable))
     return subprocess.call(command)
 
+
+def has_hparam(hparams: str | None, key: str) -> bool:
+    return get_hparam_value(hparams, key) is not None
+
+
+def get_hparam_value(hparams: str | None, key: str) -> str | None:
+    if not hparams:
+        return None
+    for part in hparams.split(","):
+        if "=" not in part:
+            continue
+        name, value = part.strip().split("=", 1)
+        if name.strip() == key:
+            return value.strip()
+    return None
+
+
+def append_hparam(hparams: str | None, key: str, value: object) -> str:
+    assignment = "{}={}".format(key, value)
+    if not hparams:
+        return assignment
+    if has_hparam(hparams, key):
+        return hparams
+    return "{},{}".format(hparams, assignment)
+
+
 def compose_legacy_data_hparams(args: argparse.Namespace) -> str:
-    if args.data_hparams:
-        return args.data_hparams
-    return "use_continuous_data=True, max_seq_len={}".format(args.max_seq_len)
+    hparams = args.data_hparams or "use_continuous_data=True"
+    return append_hparam(hparams, "max_seq_len", args.max_seq_len)
+
+
+def compose_evaluation_hparams(args: argparse.Namespace) -> str:
+    return append_hparam(args.hparams, "max_seq_len", args.max_seq_len)
+
+
+def effective_max_seq_len(args: argparse.Namespace) -> int:
+    data_hparams = getattr(args, "data_hparams", None)
+    raw_value = get_hparam_value(data_hparams, "max_seq_len")
+    if raw_value is not None:
+        try:
+            return int(raw_value)
+        except ValueError:
+            pass
+    return int(args.max_seq_len)
 
 
 def maybe_warn_sequence_checkpoint_mismatch(args: argparse.Namespace) -> None:
@@ -91,14 +139,25 @@ def maybe_warn_sequence_checkpoint_mismatch(args: argparse.Namespace) -> None:
         return
     if args.resume in {"none", "None", ""}:
         return
-    if args.data_hparams:
-        return
-    if int(args.max_seq_len)  != DEFAULT_LEGACY_MAX_SEQ_LEN:
+    if effective_max_seq_len(args) != DEFAULT_LEGACY_MAX_SEQ_LEN:
         print(
             "[warning] The original continuous Sketchformer checkpoint was "
             "trained with max_seq_len=200. Changing --max-seq-len while "
             "resuming that checkpoint may fail because Tensorflow layer "
             "shapes are sequence-length dependent."
+        )
+
+
+def maybe_warn_position_encoding(args: argparse.Namespace) -> None:
+    max_seq_len = effective_max_seq_len(args)
+    if max_seq_len > DEFAULT_MAX_POSITION_ENCODING:
+        print(
+            "[warning] The original Sketchformer encoder/decoder create "
+            "positional encodings up to {}. max_seq_len={} needs a "
+            "Sketchformer model patch before it can run.".format(
+                DEFAULT_MAX_POSITION_ENCODING,
+                max_seq_len,
+            )
         )
 
 def build_image(args: argparse.Namespace) -> int:
@@ -142,6 +201,8 @@ def prepare_data(args: argparse.Namespace) -> int:
 
 
 def evaluate_reconstruction(args: argparse.Namespace) -> int:
+    maybe_warn_sequence_checkpoint_mismatch(args)
+    maybe_warn_position_encoding(args)
     command = docker_run(args, "/workspace/sketchformer") + [
             "python",
             "evaluate-metrics.py",
@@ -157,7 +218,7 @@ def evaluate_reconstruction(args: argparse.Namespace) -> int:
             "--resume",
             container_path(args.resume),
             "--hparams",
-            args.hparams,
+            compose_evaluation_hparams(args),
             "--metrics",
         ] + args.metrics
     return run_or_print(command, args.dry_run)
@@ -167,6 +228,7 @@ def finetune_continuous(args: argparse.Namespace) -> int:
     if not args.dry_run:
         project_path(args.output_dir).mkdir(parents=True, exist_ok=True)
     maybe_warn_sequence_checkpoint_mismatch(args)
+    maybe_warn_position_encoding(args)
     command = docker_run(args, "/workspace/sketchformer") + [
        "python",
        "train.py",
@@ -203,6 +265,8 @@ def add_common(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--gpus", default=None, 
                         help="Optional Docker --gpus value, for example 'all'. ")
+    parser.add_argument("--shm-size", default=None,
+                        help="Optional Docker shared memory size, for example '8g'.")
     parser.add_argument("--sudo", action = "store_true", 
                         help="Prefix Docker commands with sudo."
     )
@@ -252,6 +316,10 @@ def build_parser() -> argparse.ArgumentParser:
     eval_parser.add_argument("--model-id", default="cvpr_tform_cont")
     eval_parser.add_argument("--resume", default=DEFAULT_CONTINUOUS_RESUME)
     eval_parser.add_argument("--gpu", default=0, type=int)
+    eval_parser.add_argument("--max-seq-len", default=DEFAULT_LEGACY_MAX_SEQ_LEN, type=int,
+                             help="Dataloader sequence length to use while evaluating.")
+    eval_parser.add_argument("--data-hparams", default=None,
+                             help=argparse.SUPPRESS)
     eval_parser.add_argument("--hparams", default = "batch_size=18,slack_config=")
     eval_parser.add_argument("--metrics", nargs="+",
                              default = ["sketch-reconstruction"])
