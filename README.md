@@ -519,7 +519,7 @@ The Text-to-Sketch code does not reimplement Sketchformer's model, dataloader,
 losses, masks, or checkpoint structure in this workflow. It only prepares the
 data and launches the original Sketchformer code through
 `integrations/original_sketchformer/` in a legacy TensorFlow 2.1 Docker
-environment.launcher
+environment.
 
 Build the CPU image:
 
@@ -563,6 +563,56 @@ python scripts/sketchformer_codebase_finetune.py --sudo finetune-continuous \
 The default fine-tuning command keeps Sketchformer's classifier layer present
 for checkpoint compatibility but sets `class_weight=0.0`, so unlabeled anime
 data is optimized through reconstruction rather than dummy classification.
+
+### Variable Sequence Length Sweeps
+
+The prepared stroke3 chunks keep sketches as variable-length arrays. The
+original Sketchformer dataloader pads or truncates them at runtime using
+`max_seq_len`, so you can reuse the same prepared dataset for length sweeps.
+Each run still has one fixed cap because the reconstruction model contains
+sequence-length-dependent weights.
+
+For checkpoint-compatible fine-tuning of the released continuous model, keep
+`--max-seq-len 200`. For feasibility runs at `50`, `75`, `100`, `500`, or
+`1000`, use a separate `--run-id` and either train from scratch with
+`--resume none` or expect checkpoint shape mismatches when changing away from
+`200`.
+
+Example dry-run for a 500-point experiment:
+
+```bash
+python scripts/sketchformer_codebase_finetune.py --dry-run finetune-continuous \
+  --dataset data/processed/sketchformer-ready-data/stroke3 \
+  --output-dir weights/finetuned \
+  --run-id anime-continuous-l500 \
+  --resume none \
+  --max-seq-len 500 \
+  --base-hparams batch_size=2,num_epochs=1,save_every=1.0,safety_save=1.0,log_every=10,notify_every=100000,slack_config=
+```
+
+On an RTX 3090 server, build and use the GPU image:
+
+```bash
+python scripts/sketchformer_codebase_finetune.py --sudo build-gpu-image
+
+python scripts/sketchformer_codebase_finetune.py --sudo \
+  --image sketchformer-tf2-gpu \
+  --gpus all \
+  --shm-size 8g \
+  finetune-continuous \
+  --run-id anime-continuous-l500 \
+  --resume none \
+  --max-seq-len 500 \
+  --base-hparams batch_size=2,num_epochs=1,save_every=1.0,safety_save=1.0,log_every=10,notify_every=100000,slack_config=
+```
+
+Longer caps increase memory roughly with attention's `max_seq_len^2` cost. On
+a 24 GB RTX 3090, start conservatively: `200 -> batch_size=8`, `500 ->
+batch_size=2`, and `1000 -> batch_size=1`, then raise batch size only after a
+successful smoke run.
+The unmodified Sketchformer encoder/decoder positional encoding is capped at
+`1000`, so higher caps require a model patch inside the `sketchformer/`
+checkout.
 
 Use `--dry-run` before any launcher command to print the Docker command without
 executing it:
