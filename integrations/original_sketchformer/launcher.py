@@ -55,7 +55,7 @@ def docker_base(args: argparse.Namespace) -> list[str]:
     if args.sudo:
         command.append("sudo")
     command.append(args.docker_bin)
-     return command
+    return command
 
 
 def docker_run(args: argparse.Namespace, workdir: str) -> list[str]:
@@ -67,9 +67,9 @@ def docker_run(args: argparse.Namespace, workdir: str) -> list[str]:
     ]
        # gpu execution command
     if args.gpus:
-            command += ["--gpus", args.gpus]
-        command.append(args.image)
-        return command
+        command += ["--gpus", args.gpus]
+    command.append(args.image)
+    return command
 
 
 def run_or_print(command: list[str], dry_run: bool) -> int:
