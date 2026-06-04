@@ -1,9 +1,10 @@
 .env
 .venv
 data/
-__pycache__/
-sketchformer/
-dependencies/Anime2Sketch/
+!configs/data/ 
+__pycache__ 
+sketchformer/ 
+dependencies/Anime2Sketch/ 
 *.egg-info/
 build/
 dist/
