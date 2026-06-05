@@ -1,492 +1,185 @@
-# Text-to-Sketch
+# Text-to-Sketch / Anime Sketchformer
 
-Text-to-Sketch is a preprocessing project for turning anime portrait images
-into vector sketch data that can be used for Sketchformer-style experiments.
+This repository prepares anime portrait sketches as vector stroke sequences and
+experiments with scaling the 2020 Sketchformer idea to more complex anime-style
+line art.
 
-The current pipeline is data preparation only. It downloads anime portrait
-images, extracts line-art sketches, filters noisy sketches, vectorizes them,
-orders the strokes, exports stroke-5 arrays, builds a sketch-token codebook,
-and prepares Sketchformer-style stroke3 chunks.
+The project currently has two parallel tracks:
 
-```text
-Danbooru2019 Portraits
-  -> line-art sketches
-  -> filtered sketches
-  -> vector strokes
-  -> ordered drawing paths
-  -> human-like timing / kinematics
-  -> stroke-5 arrays
-  -> sketch-token codebook and token sequences
-  -> Sketchformer-ready stroke3 chunks
-```
+1. **Original Sketchformer integration**: prepare anime stroke data and launch a
+   local checkout of the original TensorFlow Sketchformer codebase for
+   checkpoint-compatible experiments.
+2. **Native PyTorch rebuild**: a clean in-repo Sketchformer-style model,
+   dataloader, losses, checkpointing, and training loop designed for modern
+   CUDA training on a single RTX 3090-class GPU.
 
-## Current Capabilities
+The local development machine can be CPU-only. Full native training is expected
+to run on the GPU server.
 
-- Download a user-selected number of Danbooru2019 Portraits images over `rsync`.
-- Skip already-installed images and resume incomplete downloads.
-- Extract binary anime line-art sketches with ControlNet's `LineartAnimeDetector`.
-- Optionally extract sketches with a local Anime2Sketch checkout for comparison.
-- Filter sketches by foreground point count before vectorization.
-- Vectorize sketches into OpenCV contour strokes with RDP simplification.
-- Order strokes with directional, greedy nearest-neighbor, or TSP-style ordering.
-- Add simple Sigma-Lognormal hand-motion timing.
-- Export stroke-5 `.npz` files.
-- Build a K-means sketch-token codebook and token sequences.
-- Convert stroke-5 arrays into Sketchformer-style stroke3 train/valid/test chunks.
-- Generate basic evaluation reports and visualizations.
+## Current State
 
-In-repo model training code is not implemented yet. Near-term fine-tuning is
-handled through the Sketchformer codebase fine-tuning handoff to the original
-`sketchformer/` checkout.
-
-## Project Layout
-
-The layout includes active preprocessing modules plus empty training-oriented
-folders. In the near term, the external `sketchformer/` checkout is used to
-validate fine-tuning feasibility with the prepared portrait-sketch data. In the
-long term, folders such as `models/`, `dataloaders/`, `builders/`, `core/`,
-`experiments/`, and `weights/` are reserved for building our own modernized
-Sketchformer-compatible codebase inside this repo instead of depending on the
-original Sketchformer repository.
-
-```text
-text-to-sketch/
-├── pipeline/
-│   ├── lineart.py
-│   ├── vectorization.py
-│   ├── ordering.py
-│   ├── kinematics.py
-│   ├── stroke5.py
-│   ├── workflow.py
-│   └── run_pipeline.py
-│
-├── prep_data/
-│   ├── download_data.py
-│   ├── extract_sketches.py
-│   ├── filter_sketches.py
-│   ├── prepare_sketchformer.py
-│   └── sketch_token/
-│       └── create_token_dict.py
-│
-├── metrics/
-│   ├── compare_rdp_epsilon.py
-│   ├── evaluate_encoder.py
-│   ├── evaluate_ordering.py
-│   └── visualisation.py
-│
-├── scripts/
-│   ├── prepare_data/
-│   ├── metrics/
-│   └── run_pipeline.py
-│
-├── utils/
-│   ├── io.py
-│   ├── paths.py
-│   └── tokenizer.py
-│
-├── builders/
-│   ├── __init__.py
-│   └── layers/
-│       └── __init__.py
-├── core/
-│   └── __init__.py
-├── dataloaders/
-│   └── __init__.py
-├── models/
-│   └── __init__.py
-├── experiments/
-│   └── __init__.py
-├── dependencies/
-│   ├── README.md
-│   └── Anime2Sketch/          # optional local checkout, git-ignored
-├── integrations/
-│   └── original_sketchformer/
-│       ├── launcher.py
-│       └── docker/
-│
-├── data/
-├── weights/
-│   ├── README.md
-│   ├── pretrained/
-│   └── finetuned/
-├── sketchformer/
-├── .env.example
-├── pyproject.toml
-├── requirements.txt
-└── README.md
-```
-
-| Path | Purpose |
+| Area | Status |
 |---|---|
-| `prep_data/download_data.py` | Downloads Danbooru2019 Portraits images. |
-| `prep_data/extract_sketches.py` | Converts raw portrait images to binary line-art sketches. |
-| `prep_data/filter_sketches.py` | Filters sketches by point count. |
-| `pipeline/` | Vectorization, stroke ordering, kinematics, and stroke-5 export. |
-| `prep_data/sketch_token/` | K-means sketch-token codebook generation. |
-| `prep_data/prepare_sketchformer.py` | Converts stroke-5 files into Sketchformer-style stroke3 chunks. |
-| `metrics/` | Evaluation and visualization scripts. |
-| `utils/paths.py` | Shared default paths. |
-| `builders/` | Reserved for model-building helpers, custom layers, losses, and schedulers. |
-| `core/` | Reserved for future training loops, validation loops, checkpointing, and orchestration. |
-| `dataloaders/` | Reserved for Sketchformer-compatible dataset loaders. |
-| `models/` | Reserved for in-repo Sketchformer or Sketchformer-inspired model implementations. |
-| `experiments/` | Reserved for fine-tuning configs, ablations, and experiment entry points. |
-| `dependencies/` | Environment notes and integration docs for training dependencies. |
-| `dependencies/Anime2Sketch/` | Optional local Anime2Sketch checkout, virtualenv, and weights. This is git-ignored. |
-| `integrations/original_sketchformer/` | Adapter that launches the original Sketchformer checkout for fine-tuning and evaluation. |
-| `data/` | Local generated data. This is git-ignored. |
-| `weights/` | Placeholder for pretrained and fine-tuned weights. |
-| `sketchformer/` | External Sketchformer checkout for near-term fine-tuning feasibility validation. |
+| Anime image preprocessing | Implemented. Downloads portraits, extracts line art, filters sketches, vectorizes contours, orders strokes, and writes stroke-5 files. |
+| Sketchformer-ready data | Implemented. Builds a sketch token dictionary and converts stroke-5 sketches into chunked tok-dict `.npz` files with train/valid/test splits. Continuous stroke3 prep remains available for legacy experiments. |
+| Original Sketchformer handoff | Implemented as a Docker command launcher. The bundled image is CPU-oriented; GPU use requires a custom compatible image. |
+| Native PyTorch Sketchformer | Implemented for tok-dict reconstruction with SDPA attention, gradient checkpointing, length-bucketed loading, masked token cross entropy, token accuracy/perplexity metrics, codebook-decoded plots, evaluation, and export. |
+| Native fine-tuning from converted TF weights | Supported only after a converted PyTorch or Safetensors checkpoint exists. The TensorFlow-to-PyTorch mapping is scaffolded but not implemented yet. |
+| Text prompt conditioning | Not implemented in the current codebase. The present focus is anime sketch sequence modeling. |
 
-## Requirements
+## Pipeline Overview
 
-Use Python 3.10 or newer.
+```text
+Danbooru2019 portraits
+  -> anime line-art sketches
+  -> filtered sketch images
+  -> vector contours
+  -> ordered drawing paths
+  -> stroke-5 arrays
+  -> sketch token dictionary
+  -> Sketchformer-style tok-dict chunks
+  -> original Sketchformer or native PyTorch training
+```
 
-Python dependencies are installed from `requirements.txt`:
+## Repository Layout
+
+```text
+.
+├── configs/
+│   ├── data/                    Dataset paths, tok-dict format, batching
+│   ├── experiment/              Smoke test and anime fine-tuning presets
+│   ├── model/                   Native Sketchformer architecture config
+│   ├── optimizer/               Optimizer, scheduler, and loss weights
+│   └── trainer/                 Precision, checkpointing, runtime settings
+│
+├── prep_data/                   Download, extraction, filtering, tok-dict prep
+├── pipeline/                    Vectorization, ordering, timing, stroke-5 export
+├── metrics/                     Preprocessing and reconstruction evaluation
+├── utils/                       Shared IO, paths, and tokenization helpers
+│
+├── models/sketchformer/         Native PyTorch Sketchformer-style model
+├── dataloaders/                 Token/stroke datasets, masks, collation, loaders
+├── core/                        Losses, metrics, checkpointing, train helpers
+├── builders/                    Model, optimizer, scheduler, loss factories
+├── scripts/sketchformer/        Native train, evaluate, export, inspect CLIs
+│
+├── integrations/
+│   └── original_sketchformer/   Launcher and Docker files for legacy TF code
+├── scripts/integrations/        CLI wrappers for integration workflows
+│
+├── data/                        Local generated data, git-ignored
+├── weights/                     Local pretrained and fine-tuned weights
+├── dependencies/                Optional local third-party checkouts
+├── sketchformer/                Optional original Sketchformer checkout
+└── tests/                       Unit and smoke tests
+```
+
+| Area | Main Paths | Purpose |
+|---|---|---|
+| Data preparation | `prep_data/`, `pipeline/`, `scripts/prepare_data/` | Build clean anime sketch data from images and export stroke-5, token dictionary, and tok-dict files. |
+| Native training | `models/sketchformer/`, `dataloaders/`, `core/`, `builders/`, `scripts/sketchformer/` | Rebuilt PyTorch Sketchformer-style training path for long anime stroke sequences. |
+| Configuration | `configs/` | Compose reusable data, model, optimizer, trainer, and experiment settings. |
+| Legacy integration | `integrations/original_sketchformer/`, `scripts/integrations/`, `sketchformer/` | Run the original TensorFlow Sketchformer checkout for compatibility experiments. |
+| Outputs | `data/`, `weights/`, `logs/`, `runs/` | Local datasets, checkpoints, logs, and training artifacts. These are not meant for source control. |
+
+## Environment
+
+Use Python 3.10 or 3.11 for the training environment. The repo may be inspected
+on CPU, but native training needs PyTorch with CUDA on the server.
 
 ```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
 pip install -r requirements.txt
+pip install -e .
 ```
 
-The dataset downloader also requires the system `rsync` binary. On
-Debian/Ubuntu:
+For the RTX 3090 server, install the PyTorch CUDA wheel that matches the server
+driver before installing the remaining requirements. Example shape:
+
+```bash
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+pip install -r requirements.txt
+pip install -e .
+```
+
+The data downloader also requires the system `rsync` binary.
 
 ```bash
 sudo apt install rsync
 ```
 
-Install the project in editable mode to make the `tts-*` shortcuts available:
+## Data Preparation
 
-```bash
-pip install -e .
-```
-
-Anime2Sketch is optional and is intentionally kept outside git. When using
-`--extractor anime2sketch`, keep a local Mukosame/Anime2Sketch checkout, its
-own virtualenv, and its pretrained weights under `dependencies/Anime2Sketch/`.
-The main pipeline calls that checkout through `--anime2sketch-python`, so the
-project environment and Anime2Sketch environment can stay separate.
-
-## Setup
-
-Create and activate a virtual environment:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-```
-
-Install dependencies:
-
-```bash
-pip install -r requirements.txt
-pip install -e .
-```
-
-Create local environment config:
-
-```bash
-cp .env.example .env
-```
-
-The default `.env.example` points the pipeline at Danbooru2019 Portraits:
-
-```env
-DOWNLOAD_TARGET_DIR=data/raw/portraits
-DANBOORU2019_PORTRAITS_RSYNC_URL=rsync://176.9.41.242:873/biggan/portraits/
-
-INPUT_DIR=data/raw/portraits
-OUTPUT_DIR=data/processed/sketches
-SKETCH_EXTRACTOR=lineart-anime
-
-DETECT_RES=512
-IMAGE_RES=512
-MAX_IMAGES=15
-
-# Optional Anime2Sketch extractor settings
-# Anime2Sketch is an ignored local dependency, so clone/install it manually:
-#   dependencies/Anime2Sketch/
-#
-# Expected local weight files:
-#   dependencies/Anime2Sketch/weights/netG.pth
-#   dependencies/Anime2Sketch/weights/improved.bin
-#
-# To use it, copy this file to .env and change:
-#   SKETCH_EXTRACTOR=anime2sketch
-ANIME2SKETCH_DIR=dependencies/Anime2Sketch
-ANIME2SKETCH_PYTHON=dependencies/Anime2Sketch/.venv/bin/python
-
-# Choices: default uses weights/netG.pth, improved uses weights/improved.bin.
-ANIME2SKETCH_MODEL=improved
-ANIME2SKETCH_GPU_IDS=
-ANIME2SKETCH_CLAHE_CLIP=-1
-```
-
-## Data Locations
-
-| Stage | Default Path |
-|---|---|
-| Raw portrait images | `data/raw/portraits/` |
-| Download manifest | `data/raw/portraits/.danbooru2019-portraits-files.txt` |
-| Extracted sketches | `data/processed/sketches/<extractor_name>/` |
-| ControlNet sketches | `data/processed/sketches/lineart_anime/` |
-| Anime2Sketch sketches | `data/processed/sketches/anime2sketch/` |
-| Anime2Sketch checkout | `dependencies/Anime2Sketch/` local and git-ignored |
-| Anime2Sketch weights | `dependencies/Anime2Sketch/weights/netG.pth` and `dependencies/Anime2Sketch/weights/improved.bin` |
-| Filtered sketches | `data/processed/sketches_filtered/` |
-| Filter report | `data/processed/sketch_point_filter_report.csv` |
-| Stroke-5 arrays | `data/processed/stroke5/` |
-| Sketch-token codebook | `data/processed/sketch_token/codebook.npy` |
-| Token sequences | `data/processed/tokens/` |
-| Sketchformer-ready chunks | `data/processed/sketchformer-ready-data/stroke3/` |
-| Evaluation outputs | `data/processed/evaluations/` |
-
-## Run The Pipeline
-
-You can use either the script paths or the installed `tts-*` shortcuts.
-
-### 1. Download Portrait Images
-
-Choose how many raw images should exist locally:
-
-```bash
-python scripts/prepare_data/download_data.py --num-images 5000
-```
-
-Equivalent shortcut:
+Download portraits:
 
 ```bash
 tts-download-data --num-images 5000
 ```
 
-The downloader lists the remote portrait images, checks local files by path and
-file size, skips complete images, and downloads only the missing remainder.
-
-Preview without downloading:
+Extract line-art sketches with the default ControlNet anime line-art detector:
 
 ```bash
-python scripts/prepare_data/download_data.py --num-images 5000 --dry-run
+tts-extract-sketches --extractor lineart-anime --max-images 5000
 ```
 
-Limit bandwidth:
+Optional Anime2Sketch extraction is supported through a separate local checkout:
 
 ```bash
-python scripts/prepare_data/download_data.py --num-images 5000 --bwlimit 5m
-```
-
-Override the destination or rsync source:
-
-```bash
-python scripts/prepare_data/download_data.py \
-  --num-images 5000 \
-  --target-dir data/raw/portraits \
-  --rsync-url rsync://176.9.41.242:873/biggan/portraits/
-```
-
-### 2. Extract Line-Art Sketches
-
-The extraction stage supports two sketch extractors:
-
-| Extractor | Status | Output Folder |
-|---|---|---|
-| `lineart-anime` | Default ControlNet `LineartAnimeDetector` baseline. | `data/processed/sketches/lineart_anime/` |
-| `anime2sketch` | Optional local Anime2Sketch checkout. | `data/processed/sketches/anime2sketch/` |
-
-The input portraits are treated as one flat image pool. `--max-images` limits
-the number of new sketches created in the current run. Existing output files
-are skipped before the limit is applied, so interrupted runs can be resumed
-without regenerating sketches.
-
-For example, if 100 raw portraits exist, 40 Anime2Sketch outputs already exist,
-and you run `--max-images 20`, the command creates 20 more sketches from the
-remaining 60 missing outputs.
-
-#### ControlNet Baseline
-
-ControlNet remains the default:
-
-```bash
-python scripts/prepare_data/extract_sketches.py
-```
-
-Equivalent shortcut:
-
-```bash
-tts-extract-sketches
-```
-
-By default, outputs are namespaced by extractor:
-
-```text
-data/processed/sketches/lineart_anime/
-```
-
-Run with explicit settings:
-
-```bash
-python scripts/prepare_data/extract_sketches.py \
-  --input-dir data/raw/portraits \
-  --output-dir data/processed/sketches \
-  --extractor lineart-anime \
-  --detect-resolution 512 \
-  --image-resolution 512 \
-  --max-images 15
-```
-
-Use `--max-images 0` to process every pending image.
-
-#### Anime2Sketch
-
-Anime2Sketch is an optional external extractor. It is ignored by git, so each
-machine that wants to use it must prepare its own local checkout and weights.
-
-Clone and install it into a separate virtualenv:
-
-```bash
-mkdir -p dependencies
-git clone https://github.com/Mukosame/Anime2Sketch.git dependencies/Anime2Sketch
-cd dependencies/Anime2Sketch
-python -m venv .venv
-.venv/bin/python -m pip install --upgrade pip
-.venv/bin/python -m pip install -r requirements.txt
-cd ../..
-```
-
-Place the model files in the checkout:
-
-```text
-dependencies/Anime2Sketch/weights/netG.pth
-dependencies/Anime2Sketch/weights/improved.bin
-```
-
-The `default` model uses `netG.pth`. The `improved` model uses `improved.bin`
-and is the better starting point for darker or lower-contrast portraits.
-
-Run Anime2Sketch through the main project environment, while pointing to the
-Anime2Sketch environment:
-
-```bash
-python scripts/prepare_data/extract_sketches.py \
-  --input-dir data/raw/portraits \
-  --output-dir data/processed/sketches \
+tts-extract-sketches \
   --extractor anime2sketch \
   --anime2sketch-dir dependencies/Anime2Sketch \
   --anime2sketch-python dependencies/Anime2Sketch/.venv/bin/python \
   --anime2sketch-model improved \
   --anime2sketch-gpu-ids "" \
-  --image-resolution 512 \
-  --max-images 20
+  --max-images 5000
 ```
 
-For the default Anime2Sketch weights, change only the model flag:
+Filter noisy sketches:
 
 ```bash
---anime2sketch-model default
+tts-filter-sketches --max-points 10000
 ```
 
-On CPU-only machines, keep `--anime2sketch-gpu-ids ""`.
-
-Anime2Sketch outputs are written separately:
-
-```text
-data/processed/sketches/anime2sketch/
-```
-
-To compare extractors fairly, run both extractors over the same portrait set and
-inspect their separate output folders:
-
-```bash
-python scripts/prepare_data/extract_sketches.py \
-  --extractor lineart-anime \
-  --max-images 20
-
-python scripts/prepare_data/extract_sketches.py \
-  --extractor anime2sketch \
-  --anime2sketch-dir dependencies/Anime2Sketch \
-  --anime2sketch-python dependencies/Anime2Sketch/.venv/bin/python \
-  --anime2sketch-model improved \
-  --anime2sketch-gpu-ids "" \
-  --max-images 20
-```
-
-Use `--flat-output` only when you intentionally want to write directly into
-`--output-dir` without the extractor subfolder.
-
-### 3. Filter Noisy Sketches
-
-```bash
-python scripts/prepare_data/filter_sketches_by_points.py
-```
-
-Equivalent shortcut:
-
-```bash
-tts-filter-sketches
-```
-
-Default behavior:
-
-- Reads sketches from `data/processed/sketches/`.
-- Recursively includes extractor-specific subfolders such as `lineart_anime/`
-  and `anime2sketch/`.
-- Keeps sketches at or below the user-selected `--max-points` threshold.
-- Copies kept sketches to `data/processed/sketches_filtered/`.
-- Writes `data/processed/sketch_point_filter_report.csv`.
-
-To filter only one extractor, point `--input-dir` and `--output-dir` at that
-extractor's folder:
-
-```bash
-python scripts/prepare_data/filter_sketches_by_points.py \
-  --input-dir data/processed/sketches/anime2sketch \
-  --output-dir data/processed/sketches_filtered/anime2sketch \
-  --max-points 10000
-```
-
-Useful options:
-
-```bash
-python scripts/prepare_data/filter_sketches_by_points.py \
-  --max-points 10000 \
-  --count original \
-  --limit 100
-```
-
-### 4. Vectorize, Order, Time, And Tokenize
-
-```bash
-python scripts/run_pipeline.py
-```
-
-Equivalent shortcut:
+Vectorize, order, time, and export stroke-5 sketches:
 
 ```bash
 tts-run-pipeline
 ```
 
-This interactive command samples filtered sketches, asks how many to process,
-asks which ordering method to use, then writes:
-
-- stroke-5 arrays under `data/processed/stroke5/`
-- sketch-token codebook under `data/processed/sketch_token/`
-- token sequences under `data/processed/tokens/`
-
-### 5. Prepare Sketchformer-Style Stroke3 Data
+Build the sketch token dictionary from stroke-5 deltas:
 
 ```bash
-python scripts/prepare_data/prepare_anime_data.py
+tts-create-sketch-token-dict \
+  --source-dir data/processed/stroke5 \
+  --output-dir data/processed/sketch_token \
+  --K 1000
 ```
 
-Equivalent shortcut:
+Convert stroke-5 files into Sketchformer-style tok-dict chunks:
 
 ```bash
-tts-prepare-sketchformer
+tts-prepare-sketchformer-tokens \
+  --source-dir data/processed/stroke5 \
+  --token-dict-dir data/processed/sketch_token \
+  --target-dir data/processed/sketchformer-ready-data/tok-dict \
+  --n-chunks 10
 ```
 
-This converts stroke-5 arrays into chunked stroke3 data:
+Continuous stroke3 chunks are still supported for legacy experiments:
+
+```bash
+tts-prepare-sketchformer \
+  --source-dir data/processed/stroke5 \
+  --target-dir data/processed/sketchformer-ready-data/stroke3 \
+  --n-chunks 10
+```
+
+Expected tok-dict output:
 
 ```text
-data/processed/sketchformer-ready-data/stroke3/
+data/processed/sketchformer-ready-data/tok-dict/
 ├── train_000.npz
 ├── train_001.npz
 ├── ...
@@ -495,238 +188,175 @@ data/processed/sketchformer-ready-data/stroke3/
 └── meta.npz
 ```
 
-## Sketchformer Codebase Fine-Tuning
+## Native PyTorch Training
 
-Near-term fine-tuning follows a strict handoff to the original Sketchformer
-codebase:
+The native path is the preferred direction for RTX 3090 training. It uses:
 
-```text
-Text-to-Sketch pipeline
-  -> cleaned sketches
-  -> stroke5 files
-  -> Sketchformer-compatible stroke3 chunks
-  -> handoff
+- tok-dict variable-length batches with SDPA-compatible masks
+- length-bucketed sampling to reduce padding
+- gradient checkpointing for long sequences
+- CUDA mixed precision with `16-mixed` by default
+- TF32 matmul enabled by default on CUDA
+- full SDPA padding-mask construction disabled by default for 2048-token anime
+  runs, which helps PyTorch stay on Flash or memory-efficient attention kernels
+- masked token cross entropy over the sketch token dictionary
+- token accuracy and token perplexity validation metrics
 
-Original sketchformer/ checkout
-  -> dataloader
-  -> model architecture
-  -> losses and masks
-  -> pretrained checkpoint loading
-  -> fine-tuning and evaluation
-```
-
-The Text-to-Sketch code does not reimplement Sketchformer's model, dataloader,
-losses, masks, or checkpoint structure in this workflow. It only prepares the
-data and launches the original Sketchformer code through
-`integrations/original_sketchformer/` in a legacy TensorFlow 2.1 Docker
-environment.
-
-Build the CPU image:
+CPU dry run:
 
 ```bash
-python scripts/sketchformer_codebase_finetune.py --sudo build-image
+tts-train-sketchformer --experiment smoke_test --dry-run
 ```
 
-Write legacy NumPy-compatible stroke3 chunks from existing stroke5 data:
+RTX 3090 training:
 
 ```bash
-python scripts/sketchformer_codebase_finetune.py --sudo prepare-data \
+tts-train-sketchformer \
+  --experiment anime_tok_dict_finetune \
+  --device cuda \
+  --precision 16-mixed
+```
+
+Resume a native checkpoint:
+
+```bash
+tts-train-sketchformer \
+  --experiment anime_tok_dict_finetune \
+  --device cuda \
+  --resume weights/finetuned/sketchformer-tok-dict-anime/last.pt
+```
+
+Evaluate:
+
+```bash
+tts-evaluate-sketchformer \
+  --experiment anime_tok_dict_finetune \
+  --checkpoint weights/finetuned/sketchformer-tok-dict-anime/best.pt \
+  --split valid \
+  --device cuda \
+  --metrics-output data/processed/evaluations/native_valid_metrics.json \
+  --plots-output-dir data/processed/evaluations/native_reconstructions
+```
+
+Export weights:
+
+```bash
+tts-export-sketchformer \
+  --experiment anime_tok_dict_finetune \
+  --checkpoint weights/finetuned/sketchformer-tok-dict-anime/best.pt \
+  --output weights/finetuned/sketchformer-tok-dict-anime/model.safetensors
+```
+
+## Original Sketchformer Integration
+
+The legacy path is useful for validating data compatibility against the 2020
+codebase and its TensorFlow checkpoints.
+
+Build the bundled CPU image:
+
+```bash
+tts-sketchformer-codebase-finetune --sudo build-image
+```
+
+Build the RTX 3090-oriented GPU image:
+
+```bash
+tts-sketchformer-codebase-finetune --sudo build-gpu-image
+```
+
+Prepare legacy-compatible data:
+
+```bash
+tts-sketchformer-codebase-finetune --sudo prepare-data \
   --source-dir data/processed/stroke5 \
   --target-dir data/processed/sketchformer-ready-data/stroke3 \
   --n-chunks 10 \
   --n-classes 345
 ```
 
-For a tiny smoke test, add `--min-valid-size 18` so the original reconstruction
-plotter has enough validation samples for its fixed grid.
-
-Evaluate the pretrained continuous checkpoint:
+Fine-tune with the original checkout:
 
 ```bash
-python scripts/sketchformer_codebase_finetune.py --sudo evaluate-reconstruction \
-  --dataset data/processed/sketchformer-ready-data/stroke3 \
-  --output-dir weights/pretrained \
-  --model-id cvpr_tform_cont \
-  --resume weights/pretrained/sketch-transformer-tf2-cvpr_tform_cont/weights/ckpt-12
-```
-
-Fine-tune the continuous checkpoint:
-
-```bash
-python scripts/sketchformer_codebase_finetune.py --sudo finetune-continuous \
+tts-sketchformer-codebase-finetune --sudo finetune-continuous \
   --dataset data/processed/sketchformer-ready-data/stroke3 \
   --output-dir weights/finetuned \
   --run-id anime-continuous-finetune \
   --resume weights/pretrained/sketch-transformer-tf2-cvpr_tform_cont/weights/ckpt-12
 ```
 
-The default fine-tuning command keeps Sketchformer's classifier layer present
-for checkpoint compatibility but sets `class_weight=0.0`, so unlabeled anime
-data is optimized through reconstruction rather than dummy classification.
-
-### Variable Sequence Length Sweeps
-
-The prepared stroke3 chunks keep sketches as variable-length arrays. The
-original Sketchformer dataloader pads or truncates them at runtime using
-`max_seq_len`, so you can reuse the same prepared dataset for length sweeps.
-Each run still has one fixed cap because the reconstruction model contains
-sequence-length-dependent weights.
-
-For checkpoint-compatible fine-tuning of the released continuous model, keep
-`--max-seq-len 200`. For feasibility runs at `50`, `75`, `100`, `500`, or
-`1000`, use a separate `--run-id` and either train from scratch with
-`--resume none` or expect checkpoint shape mismatches when changing away from
-`200`.
-
-Example dry-run for a 500-point experiment:
+For GPU experiments, provide a custom image compatible with the server CUDA
+stack, or use the bundled GPU image, and expose Docker GPUs explicitly:
 
 ```bash
-python scripts/sketchformer_codebase_finetune.py --dry-run finetune-continuous \
-  --dataset data/processed/sketchformer-ready-data/stroke3 \
-  --output-dir weights/finetuned \
-  --run-id anime-continuous-l500 \
-  --resume none \
-  --max-seq-len 500 \
-  --base-hparams batch_size=2,num_epochs=1,save_every=1.0,safety_save=1.0,log_every=10,notify_every=100000,slack_config=
-```
-
-On an RTX 3090 server, build and use the GPU image:
-
-```bash
-python scripts/sketchformer_codebase_finetune.py --sudo build-gpu-image
-
-python scripts/sketchformer_codebase_finetune.py --sudo \
+tts-sketchformer-codebase-finetune \
+  --sudo \
   --image sketchformer-tf2-gpu \
   --gpus all \
-  --shm-size 8g \
-  finetune-continuous \
-  --run-id anime-continuous-l500 \
-  --resume none \
-  --max-seq-len 500 \
-  --base-hparams batch_size=2,num_epochs=1,save_every=1.0,safety_save=1.0,log_every=10,notify_every=100000,slack_config=
+  --dry-run \
+  finetune-continuous
 ```
 
-Longer caps increase memory roughly with attention's `max_seq_len^2` cost. On
-a 24 GB RTX 3090, start conservatively: `200 -> batch_size=8`, `500 ->
-batch_size=2`, and `1000 -> batch_size=1`, then raise batch size only after a
-successful smoke run.
-The unmodified Sketchformer encoder/decoder positional encoding is capped at
-`1000`, so higher caps require a model patch inside the `sketchformer/`
-checkout.
+The released continuous TensorFlow checkpoint is sequence-length dependent and
+was trained with `max_seq_len=200`. Keep that value when resuming the original
+checkpoint. Larger values in the legacy path are for from-scratch compatibility
+experiments and will use the old TensorFlow attention implementation, not the
+optimized native PyTorch path.
 
-Use `--dry-run` before any launcher command to print the Docker command without
-executing it:
+## Configuration
 
-```bash
-python scripts/sketchformer_codebase_finetune.py --sudo --dry-run finetune-continuous
-```
+Important configs:
 
-Detailed notes live in
-`study/fine-tune-strategy/sketchformer_codebase_finetuning.md`.
+| File | Purpose |
+|---|---|
+| `configs/train.yaml` | Root composed training config. |
+| `configs/model/sketchformer_tok_dict.yaml` | Native tok-dict model architecture and token reconstruction head. |
+| `configs/data/anime_tok_dict.yaml` | Tok-dict dataset, token dictionary IDs, sequence length, and batching. |
+| `configs/trainer/single_gpu.yaml` | Single-GPU runtime, precision, checkpointing, and logging settings. |
+| `configs/experiment/smoke_test.yaml` | Tiny CPU-friendly dry-run/smoke settings. |
+| `configs/experiment/anime_tok_dict_finetune.yaml` | RTX 3090-oriented native tok-dict training experiment. |
+| `configs/experiment/anime_continuous_finetune.yaml` | Legacy continuous stroke3 experiment. |
 
-## Evaluation Commands
-
-Compare stroke ordering strategies:
-
-```bash
-python scripts/metrics/evaluate_ordering.py --samples 20
-```
-
-Shortcut:
-
-```bash
-tts-evaluate-ordering --samples 20
-```
-
-Evaluate sketch-token encoding and decoding:
-
-```bash
-python scripts/metrics/evaluate_encoder.py
-```
-
-Shortcut:
-
-```bash
-tts-evaluate-encoder
-```
-
-Compare RDP simplification on dense sketches:
-
-```bash
-python scripts/metrics/compare_rdp_epsilon.py
-```
-
-Shortcut:
-
-```bash
-tts-compare-rdp
-```
+The default root config trains the native tok-dict model. To use a custom token
+dictionary size, update `data.format.token_dictionary` or provide an experiment
+override; config composition copies those IDs into `model.input.token_dictionary`.
 
 ## Formats
 
-### Stroke-5
-
-Stroke-5 is the main vector format produced by this preprocessing pipeline.
-Each `.npz` file contains a `stroke5` array with shape `(N + 1, 5)`.
+Stroke-5:
 
 ```text
 [dx, dy, p1, p2, p3]
 ```
 
-| Column | Meaning |
-|---|---|
-| `dx` | X movement from the previous point. |
-| `dy` | Y movement from the previous point. |
-| `p1` | Pen is drawing. |
-| `p2` | Pen lifts after this point. |
-| `p3` | End-of-sketch marker. |
-
-Example:
-
-```python
-from utils.io import load_stroke5
-
-s5 = load_stroke5("data/processed/stroke5/example.npz")
-```
-
-### Stroke3
-
-Stroke3 is the Sketchformer-style training format:
+Tok-dict:
 
 ```text
-[dx, dy, pen_state]
+0..K-1 = codebook motion tokens
+K      = stroke separator token
+K + 1  = end-of-sketch token
+K + 2  = padding token
 ```
 
-`prep_data/prepare_sketchformer.py` converts stroke-5 files into stroke3
-train/valid/test chunks.
+The native model consumes tok-dict token sequences by default. Continuous
+stroke3 remains available through `anime_stroke3` and
+`sketchformer_continuous` for compatibility checks.
 
-### Sketch Tokens
+## Verification
 
-Sketch tokens are integer IDs produced by quantizing `[dx, dy]` movements with
-a K-means codebook.
+Run the tests with either command:
 
-```python
-from utils.io import load_codebook, load_stroke5
-from utils.tokenizer import decode_tokens, encode_stroke5
-
-stroke5 = load_stroke5("data/processed/stroke5/example.npz")
-codebook = load_codebook("data/processed/sketch_token/codebook.npy")
-
-tokens = encode_stroke5(stroke5, codebook)
-reconstructed = decode_tokens(tokens, codebook)
+```bash
+python -m unittest discover -s tests -v
+pytest -q
 ```
 
-## Command Reference
+On a CPU-only development machine, use `--dry-run` and the smoke experiment to
+validate config composition without launching full training.
 
-| Task | Script | Shortcut |
-|---|---|---|
-| Download portraits | `python scripts/prepare_data/download_data.py --num-images 5000` | `tts-download-data --num-images 5000` |
-| Extract ControlNet line-art | `python scripts/prepare_data/extract_sketches.py --extractor lineart-anime --max-images 20` | `tts-extract-sketches --extractor lineart-anime --max-images 20` |
-| Extract Anime2Sketch line-art | `python scripts/prepare_data/extract_sketches.py --extractor anime2sketch --anime2sketch-dir dependencies/Anime2Sketch --anime2sketch-python dependencies/Anime2Sketch/.venv/bin/python --anime2sketch-model improved --anime2sketch-gpu-ids "" --max-images 20` | `tts-extract-sketches --extractor anime2sketch --anime2sketch-dir dependencies/Anime2Sketch --anime2sketch-python dependencies/Anime2Sketch/.venv/bin/python --anime2sketch-model improved --anime2sketch-gpu-ids "" --max-images 20` |
-| Filter sketches | `python scripts/prepare_data/filter_sketches_by_points.py` | `tts-filter-sketches` |
-| Run main pipeline | `python scripts/run_pipeline.py` | `tts-run-pipeline` |
-| Prepare stroke3 data | `python scripts/prepare_data/prepare_anime_data.py` | `tts-prepare-sketchformer` |
-| Sketchformer codebase fine-tuning | `python scripts/sketchformer_codebase_finetune.py --sudo --dry-run finetune-continuous` | `tts-sketchformer-codebase-finetune --sudo --dry-run finetune-continuous` |
-| Evaluate ordering | `python scripts/metrics/evaluate_ordering.py --samples 20` | `tts-evaluate-ordering --samples 20` |
-| Evaluate encoder | `python scripts/metrics/evaluate_encoder.py` | `tts-evaluate-encoder` |
-| Compare RDP epsilon | `python scripts/metrics/compare_rdp_epsilon.py` | `tts-compare-rdp` |
+## Known Gaps
+
+- TensorFlow-to-PyTorch Sketchformer checkpoint conversion targets the legacy
+  continuous checkpoint path, not the tok-dict objective.
+- The native model is tok-dict reconstruction-first; text prompt conditioning is
+  not wired into the architecture yet.
+- The legacy Docker image is CPU-oriented and intentionally conservative.
