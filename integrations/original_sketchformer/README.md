@@ -16,20 +16,31 @@ losses, or checkpoint structure.
 | Path | Purpose |
 |---|---|
 | `launcher.py` | Builds Docker commands for original Sketchformer training and evaluation. |
-| `docker/` | CPU TensorFlow 2.1 image and GPU image used to run the legacy code. |
+| `docker/Dockerfile.cpu` | CPU TensorFlow 2.1 image used to run the legacy code. |
+| `docker/Dockerfile.gpu` | TensorFlow GPU image intended for RTX 3090 server experiments. |
+
+The original Sketchformer release used an old TensorFlow/CUDA stack. Use the
+CPU image for local compatibility checks and the GPU image for RTX 3090 server
+experiments.
 
 ## Common Commands
 
 Build the image:
 
 ```bash
-python scripts/sketchformer_codebase_finetune.py --sudo build-image
+python scripts/integrations/sketchformer_codebase_finetune.py --sudo build-image
+```
+
+Build the GPU image:
+
+```bash
+python scripts/integrations/sketchformer_codebase_finetune.py --sudo build-gpu-image
 ```
 
 Prepare legacy-compatible stroke3 chunks:
 
 ```bash
-python scripts/sketchformer_codebase_finetune.py --sudo prepare-data \
+python scripts/integrations/sketchformer_codebase_finetune.py --sudo prepare-data \
   --source-dir data/processed/stroke5 \
   --target-dir data/processed/sketchformer-ready-data/stroke3 \
   --n-chunks 10 \
@@ -39,33 +50,26 @@ python scripts/sketchformer_codebase_finetune.py --sudo prepare-data \
 Evaluate pretrained reconstruction:
 
 ```bash
-python scripts/sketchformer_codebase_finetune.py --sudo evaluate-reconstruction
+python scripts/integrations/sketchformer_codebase_finetune.py --sudo evaluate-reconstruction
 ```
 
-Fine-tune:
+Fine-tune on CPU:
 
 ```bash
-python scripts/sketchformer_codebase_finetune.py --sudo finetune-continuous
+python scripts/integrations/sketchformer_codebase_finetune.py --sudo finetune-continuous
 ```
 
-Variable-length anime sketches are handled by keeping the saved `x` arrays
-ragged and passing a fixed `--max-seq-len` per run. The Sketchformer dataloader
-pads shorter sketches and truncates longer sketches before computing masks.
-Use separate run IDs for each cap:
+Dry-run the GPU command shape:
 
 ```bash
-python scripts/sketchformer_codebase_finetune.py --dry-run finetune-continuous \
-  --run-id anime-continuous-l100 \
-  --resume none \
-  --max-seq-len 100
-
-python scripts/sketchformer_codebase_finetune.py --dry-run finetune-continuous \
-  --run-id anime-continuous-l500 \
-  --resume none \
-  --max-seq-len 500 \
-  --base-hparams batch_size=2,num_epochs=1,save_every=1.0,safety_save=1.0,log_every=10,notify_every=100000,slack_config=
+python scripts/integrations/sketchformer_codebase_finetune.py \
+  --sudo \
+  --image sketchformer-tf2-gpu \
+  --gpus all \
+  --dry-run \
+  finetune-continuous
 ```
 
-The released continuous checkpoint was trained with `max_seq_len=200`; changing
-that cap while resuming it can fail on sequence-length-dependent TensorFlow
-weights.
+Keep `--max-seq-len 200` when resuming the released continuous checkpoint. The
+legacy TensorFlow model has sequence-length-dependent layers; larger values are
+for from-scratch experiments.
