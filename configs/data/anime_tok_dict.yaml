@@ -1,7 +1,7 @@
 name: anime_tok_dict
 
 dataset:
-  root: data/processed/sketchformer-ready-data/anime_tok_dict
+  root: data/processed/sketchformer-ready-data/tok-dict
   train_pattern: train_*.npz
   valid_file: valid.npz
   test_file: test.npz
@@ -23,7 +23,7 @@ sequence:
   target_max_length: 2048
   pad_value: 1002
   pad_to_multiple_of: 8
-  truncate_long_sequence: true
+  truncate_long_sequences: true
   add_end_token: true
   build_attention_mask: false
 
@@ -34,6 +34,7 @@ batching:
   pin_memory: true
   persistent_workers: true
   drop_last: false
+  bucket_by_length: true
   bucket_boundaries:
     - 256
     - 512
