@@ -1,21 +1,36 @@
-numpy<2.0
-scipy
-scikit-learn
-scikit-image
-opencv-python-headless
-pillow
-matplotlib
-tqdm
-python-dotenv
-python_tsp
+# Core data and image processing
+numpy>=1.24,<3
+pillow>=10.0
+opencv-python-headless>=4.8
+scikit-image>=0.22
+scikit-learn>=1.3
+scipy>=1.10
+imageio>=2.31
 
-torch
-torchvision
-controlnet_aux==0.0.10
-diffusers
-transformers
-huggingface_hub
-safetensors
-einops
-timm
-accelerate
+# Pipeline utilities
+python-dotenv>=1.0
+requests>=2.31
+tqdm>=4.66
+PyYAML>=6.0
+typer>=0.12
+rich>=13.7
+tabulate>=0.9
+python_tsp>=0.4
+tsplib95>=0.7
+networkx>=3.0
+
+# Sketch extraction
+controlnet_aux>=0.0.9
+
+# Native Sketchformer training
+torch>=2.2,<3
+torchvision>=0.17,<1
+timm>=0.9
+einops>=0.7
+safetensors>=0.4
+
+# Evaluation and visualization
+matplotlib>=3.7
+
+# Test runner; tests also run with `python -m unittest`.
+pytest>=8.0

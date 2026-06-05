@@ -2,7 +2,7 @@ name: anime_continuous_finetune
 description: Legacy continuous stroke3 compatibility experiment.
 
 run:
-  id: anime_continuous_finetune
+  id: anime-continuous-finetune
   output_dir: weights/finetuned/sketchformer-continuous-anime
   resume_from_checkpoint: null
 
