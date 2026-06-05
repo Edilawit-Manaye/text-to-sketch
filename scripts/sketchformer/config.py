@@ -21,10 +21,11 @@ def load_yaml(path: str | Path) -> dict[str, Any]:
 
 
 def deep_merge(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
-    """Recursively merge    ``override``  into ``base``without mutating either"""
-    result = deepcopy(base)
+    """Recursively merge ``override`` into ``base`` without mutating either."""
+
+    result = deepcopy(dict(base))
     for key, value in override.items():
-        if isistance(value, Mapping) and isinstance(result.get(key), Mapping):
+        if isinstance(value, Mapping) and isinstance(result.get(key), Mapping):
             result[key] = deep_merge(result[key], value)
         else:
             result[key] = deepcopy(value)
