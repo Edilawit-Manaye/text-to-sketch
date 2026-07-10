@@ -66,6 +66,19 @@ class CollateAndMaskTest(unittest.TestCase):
             [True, True, True],
         ])
 
+    def test_sdpa_mask_has_pin_memory_safe_storage(self) -> None:
+        valid_mask = torch.tensor([
+            [True, True, False, False],
+            [True, True, True, False],
+        ])
+
+        for causal in (False, True):
+            sdpa = make_sdpa_self_attention_mask(valid_mask, causal=causal)
+
+            self.assertTrue(sdpa.is_contiguous())
+            if hasattr(torch, "_debug_has_internal_overlap"):
+                self.assertEqual(torch._debug_has_internal_overlap(sdpa), 0)
+
     def test_collator_pads_and_builds_standard_masks(self) -> None:
         samples = [
             {
