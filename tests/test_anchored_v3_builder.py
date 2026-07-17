@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import tempfile
 import unittest
 from contextlib import redirect_stderr
@@ -13,6 +14,7 @@ import numpy as np
 from services.anchored_sketch_data.artifacts import validate_dataset
 from services.anchored_sketch_data.builder import (
     BuilderConfig,
+    _complete_stroke_window_lengths,
     _preprocess_sources,
     _resolve_worker_count,
     build_dataset,
@@ -80,6 +82,76 @@ class AnchoredV3BuilderTest(unittest.TestCase):
             self.assertIn("images/s", progress)
             self.assertIn("epsilon 0.5 passed", progress)
             self.assertIn("build complete", progress)
+
+    def test_full_drawing_over_model_limit_is_preserved_for_stroke_windows(self) -> None:
+        raw_strokes = [
+            [(x, 20) for x in range(10, 21)],
+            [(x, 40) for x in range(10, 21)],
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source"
+            source.mkdir()
+            image = np.full((64, 64), 255, dtype=np.uint8)
+            cv2.line(image, (10, 20), (20, 20), 0, thickness=1)
+            cv2.line(image, (10, 40), (20, 40), 0, thickness=1)
+            cv2.imwrite(str(source / "two-strokes.png"), image)
+
+            with patch(
+                "services.anchored_sketch_data.builder.vectorize_image",
+                return_value=raw_strokes,
+            ), patch(
+                "services.anchored_sketch_data.builder.fit_training_codebook",
+                return_value=builder_test_codebook(),
+            ), patch(
+                "services.anchored_sketch_data.builder._source_vector_geometry_f1",
+                return_value=1.0,
+            ), patch(
+                "services.anchored_sketch_data.builder.geometry_f1",
+                return_value=1.0,
+            ):
+                dataset = build_dataset(
+                    source,
+                    root / "output",
+                    config=BuilderConfig(
+                        epsilon_candidates=(0.5,),
+                        calibration_size=1,
+                        max_sequence_length=7,
+                        train_augmentation_copies=0,
+                        shard_size=1,
+                        show_progress=False,
+                    ),
+                )
+
+            metadata = validate_dataset(dataset)
+            entries = [
+                json.loads(line)
+                for line in (dataset / "manifest.jsonl").read_text().splitlines()
+            ]
+            accepted = [entry for entry in entries if entry["status"] == "accepted"]
+            sweep = metadata["preparation"]["epsilon_sweep"][0]
+
+            self.assertEqual(metadata["rejected_count"], 0)
+            self.assertEqual(len(accepted), 1)
+            self.assertEqual(accepted[0]["token_length"], 12)
+            self.assertEqual(sweep["p99_token_length"], 12.0)
+            self.assertEqual(sweep["p99_window_token_length"], 7.0)
+            self.assertEqual(sweep["maximum_window_token_length"], 7)
+            self.assertEqual(
+                metadata["preparation"]["preprocessing"]["overlength_strategy"],
+                "complete_stroke_windows",
+            )
+
+    def test_complete_stroke_window_lengths_report_oversized_single_stroke(self) -> None:
+        tokens = np.asarray(
+            [2563, 2561, 2049, 2305, 1, 1, 2562, 2564],
+            dtype=np.int32,
+        )
+
+        self.assertEqual(
+            _complete_stroke_window_lengths(tokens, max_sequence_length=7),
+            [8],
+        )
 
     def test_minimum_source_count_is_configurable_and_prevents_publication(self) -> None:
         default_args = parse_args(

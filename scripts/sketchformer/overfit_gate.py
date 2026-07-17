@@ -282,6 +282,8 @@ def _validate_v3_config(config: Mapping[str, Any]) -> None:
         raise ValueError("Overfit gate must exclude precomputed train augmentations")
     if str(get_nested(config, "data.dataset.source_subset_strategy")) != "length_stratified":
         raise ValueError("Overfit gate requires a length-stratified representative subset")
+    if int(get_nested(config, "data.dataset.maximum_windows_per_sample", -1)) != 1:
+        raise ValueError("Overfit gate requires exactly one window per source sketch")
     if not bool(get_nested(config, "trainer.gates.overfit_mode", False)):
         raise ValueError("Overfit gate requires trainer.gates.overfit_mode=true")
     precision = str(get_nested(config, "trainer.runtime.precision", "")).lower()

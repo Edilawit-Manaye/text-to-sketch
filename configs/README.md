@@ -78,7 +78,8 @@ The stable contract is:
   `EOS=2564`, and `MASK=2565`;
 - direct, mask-aware encoder memory instead of the single-vector latent
   expander;
-- complete-stroke windows for early curriculum stages, never token truncation;
+- complete-stroke windows at every model-facing sequence limit, never token
+  truncation of the stored full drawing;
 - free-running macro median F1@2px as the best-checkpoint metric.
 
 `experiment/anime_anchored_v3_overfit.yaml` disables augmentation, exposure

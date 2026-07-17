@@ -113,7 +113,10 @@ class AnchoredV3DatasetLoaderTest(unittest.TestCase):
                     EncodedSample(
                         sample_id=f"sample-{split}",
                         source_path=f"{split}.png",
-                        source_sha256=("a" if split == "train" else "b" if split == "valid" else "c") * 64,
+                        source_sha256={"train": "a", "valid": "b", "test": "c"}[
+                            split
+                        ]
+                        * 64,
                         perceptual_hash=index,
                         group_id=f"group-{split}",
                         split=split,
@@ -175,6 +178,7 @@ class AnchoredV3DatasetLoaderTest(unittest.TestCase):
                         "token_dictionary": {
                             "pad_token_id": TOKEN_LAYOUT.pad_token_id,
                             "sep_token_id": None,
+                            "stroke_start_token_id": TOKEN_LAYOUT.stroke_start_token_id,
                             "stroke_end_token_id": TOKEN_LAYOUT.stroke_end_token_id,
                             "sos_token_id": TOKEN_LAYOUT.sos_token_id,
                             "eos_token_id": TOKEN_LAYOUT.eos_token_id,
@@ -200,6 +204,81 @@ class AnchoredV3DatasetLoaderTest(unittest.TestCase):
 
             self.assertEqual(batch["lengths"].tolist(), [7])
             self.assertEqual(batch["tokens"][0, -1].item(), TOKEN_LAYOUT.eos_token_id)
+
+    def test_datamodule_windows_long_v3_drawings_for_every_model_facing_split(self) -> None:
+        codebook = np.zeros((CODEBOOK_SIZE, 2), dtype=np.float32)
+        stroke = [
+            TOKEN_LAYOUT.stroke_start_token_id,
+            TOKEN_LAYOUT.x_token_start,
+            TOKEN_LAYOUT.y_token_start,
+            TOKEN_LAYOUT.motion_token_start,
+            TOKEN_LAYOUT.stroke_end_token_id,
+        ]
+        tokens = np.asarray(
+            [TOKEN_LAYOUT.sos_token_id, *stroke, *stroke, TOKEN_LAYOUT.eos_token_id],
+            dtype=np.int32,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = write_dataset_atomic(
+                Path(directory),
+                [
+                    EncodedSample(
+                        sample_id=f"long-{split}",
+                        source_path=f"{split}.png",
+                        source_sha256=("a" if split == "train" else "b" if split == "valid" else "c") * 64,
+                        perceptual_hash=index,
+                        group_id=f"group-{split}",
+                        split=split,
+                        point_count=4,
+                        stroke_count=2,
+                        tokens=tokens,
+                    )
+                    for index, split in enumerate(("train", "valid", "test"))
+                ],
+                codebook,
+                preparation={"fixture": True},
+                shard_size=1,
+            )
+            module = StrokeSequenceDataModule(
+                {
+                    "dataset": {"root": str(root)},
+                    "format": {
+                        "type": "anchored_v3",
+                        "token_dictionary": {
+                            "pad_token_id": TOKEN_LAYOUT.pad_token_id,
+                            "sep_token_id": None,
+                            "stroke_start_token_id": TOKEN_LAYOUT.stroke_start_token_id,
+                            "stroke_end_token_id": TOKEN_LAYOUT.stroke_end_token_id,
+                            "sos_token_id": TOKEN_LAYOUT.sos_token_id,
+                            "eos_token_id": TOKEN_LAYOUT.eos_token_id,
+                        },
+                    },
+                    "sequence": {
+                        "max_length": 7,
+                        "truncate_long_sequences": False,
+                        "add_start_token": False,
+                        "add_end_token": False,
+                        "pad_to_multiple_of": 1,
+                    },
+                    "batching": {
+                        "batch_size": 1,
+                        "eval_batch_size": 1,
+                        "num_workers": 0,
+                    },
+                }
+            )
+            module.setup()
+
+            loaders = (
+                module.train_dataloader(),
+                module.val_dataloader(),
+                module.test_dataloader(),
+            )
+            for loader in loaders:
+                self.assertEqual(len(loader.dataset), 2)
+                self.assertIsInstance(loader.dataset.metadata, dict)
+                batch = next(iter(loader))
+                self.assertEqual(batch["lengths"].tolist(), [7])
 
     def test_train_source_limits_are_deterministic_and_nested(self) -> None:
         codebook = np.zeros((CODEBOOK_SIZE, 2), dtype=np.float32)

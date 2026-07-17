@@ -90,6 +90,23 @@ class AnchoredV3WindowTest(unittest.TestCase):
             self.assertEqual(np.count_nonzero(sample["tokens"] == 12), 1)
             self.assertLessEqual(sample["length"], 8)
 
+    def test_window_limit_selects_one_deterministic_window_per_source(self) -> None:
+        source = _Dataset()
+        source.metadata = {"fixture": True}
+        windows = CompleteStrokeWindowDataset(
+            source,
+            8,
+            sos_token_id=13,
+            eos_token_id=14,
+            stroke_start_token_id=11,
+            stroke_end_token_id=12,
+            maximum_windows_per_sample=1,
+        )
+
+        self.assertEqual(len(windows), 1)
+        self.assertEqual(windows.metadata, {"fixture": True})
+        self.assertEqual(windows[0]["tokens"].tolist(), [13, 11, 4, 8, 2, 1, 12, 14])
+
     def test_v3_collator_refuses_overlength_sequences(self) -> None:
         collator = TokenSequenceCollator(
             max_length=6,

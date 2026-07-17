@@ -18,7 +18,7 @@ from pipeline.vectorization import centerline_metrics, source_centerline, vector
 
 from .artifacts import EncodedSample, RejectedSample, sha256_file, write_dataset_atomic
 from .codebook import TrainingStrokeSample, fit_training_codebook
-from .contract import MAX_SEQUENCE_LENGTH
+from .contract import MAX_SEQUENCE_LENGTH, TOKEN_LAYOUT
 from .preprocessing import (
     CanvasTransform,
     augment_strokes,
@@ -81,6 +81,8 @@ class _PreprocessingTask:
 class EpsilonResult:
     epsilon: float
     p99_token_length: float
+    p99_window_token_length: float
+    maximum_window_token_length: int
     source_vector_median_f1: float
     roundtrip_median_f1: float
     roundtrip_p10_f1: float
@@ -174,6 +176,7 @@ def build_dataset(
     sweep: list[EpsilonResult] = []
     chosen_epsilon: float | None = None
     chosen_codebook: np.ndarray | None = None
+    chosen_training_simplified: dict[str, list[list[tuple[float, float]]]] | None = None
     epsilon_candidates = sorted(set(config.epsilon_candidates))
     for epsilon_index, epsilon in enumerate(epsilon_candidates, start=1):
         epsilon_started = time.perf_counter()
@@ -186,8 +189,8 @@ def build_dataset(
             simplified = {
                 sample.sample_id: simplify_strokes(sample.strokes, epsilon)
                 for sample in _progress(
-                    sources,
-                    total=len(sources),
+                    training,
+                    total=len(training),
                     description=f"RDP epsilon {epsilon:g}",
                     unit="image",
                     enabled=config.show_progress,
@@ -208,6 +211,7 @@ def build_dataset(
             source_scores: list[float] = []
             roundtrip_scores: list[float] = []
             lengths: list[int] = []
+            window_lengths: list[int] = []
             for sample in _progress(
                 calibration,
                 total=len(calibration),
@@ -227,16 +231,26 @@ def build_dataset(
                 )
                 roundtrip_scores.append(geometry_f1(candidate, restored))
                 lengths.append(len(tokens))
+                window_lengths.extend(
+                    _complete_stroke_window_lengths(
+                        tokens,
+                        max_sequence_length=config.max_sequence_length,
+                    )
+                )
             result = EpsilonResult(
                 epsilon=float(epsilon),
                 p99_token_length=float(np.quantile(lengths, 0.99, method="higher")),
+                p99_window_token_length=float(
+                    np.quantile(window_lengths, 0.99, method="higher")
+                ),
+                maximum_window_token_length=max(window_lengths),
                 source_vector_median_f1=float(np.median(source_scores)),
                 roundtrip_median_f1=float(np.median(roundtrip_scores)),
                 roundtrip_p10_f1=float(np.quantile(roundtrip_scores, 0.10)),
                 passed=False,
             )
             passed = (
-                result.p99_token_length <= config.max_sequence_length
+                result.maximum_window_token_length <= config.max_sequence_length
                 and result.source_vector_median_f1 >= config.source_vector_f1_gate
                 and result.roundtrip_median_f1 >= config.roundtrip_median_f1_gate
                 and result.roundtrip_p10_f1 >= config.roundtrip_p10_f1_gate
@@ -246,7 +260,9 @@ def build_dataset(
             _log(
                 f"epsilon {epsilon:g} {'passed' if passed else 'failed'} in "
                 f"{_format_duration(time.perf_counter() - epsilon_started)}: "
-                f"p99_tokens={result.p99_token_length:g}, "
+                f"p99_full_tokens={result.p99_token_length:g}, "
+                f"p99_window_tokens={result.p99_window_token_length:g}, "
+                f"max_window_tokens={result.maximum_window_token_length:,}, "
                 f"source_f1={result.source_vector_median_f1:.4f}, "
                 f"roundtrip_median_f1={result.roundtrip_median_f1:.4f}, "
                 f"roundtrip_p10_f1={result.roundtrip_p10_f1:.4f}",
@@ -255,6 +271,7 @@ def build_dataset(
             if passed:
                 chosen_epsilon = float(epsilon)
                 chosen_codebook = codebook
+                chosen_training_simplified = simplified
                 break
         except Exception as exc:
             _log(
@@ -269,7 +286,11 @@ def build_dataset(
                 "aborting without retrying other epsilon candidates: "
                 f"{type(exc).__name__}: {exc}"
             ) from exc
-    if chosen_epsilon is None or chosen_codebook is None:
+    if (
+        chosen_epsilon is None
+        or chosen_codebook is None
+        or chosen_training_simplified is None
+    ):
         details = "; ".join(
             f"epsilon={result.epsilon}: {result.failure or asdict(result)}" for result in sweep
         )
@@ -290,7 +311,9 @@ def build_dataset(
         unit="image",
         enabled=config.show_progress,
     ):
-        simplified = simplify_strokes(sample.strokes, chosen_epsilon)
+        simplified = chosen_training_simplified.get(sample.sample_id)
+        if simplified is None:
+            simplified = simplify_strokes(sample.strokes, chosen_epsilon)
         variants: list[tuple[str, list[list[tuple[float, float]]], bool]] = [
             (sample.sample_id, simplified, False)
         ]
@@ -309,14 +332,21 @@ def build_dataset(
                 )
         for variant_id, strokes, augmented in variants:
             tokens = tokenizer.encode(strokes)
+            window_lengths = _complete_stroke_window_lengths(
+                tokens,
+                max_sequence_length=config.max_sequence_length,
+            )
             preprocessing = {
                 "rdp_epsilon": chosen_epsilon,
                 "canvas_size": 256,
                 "canvas_margin": 8,
                 "augmented": augmented,
                 "source_sample_id": sample.sample_id,
+                "full_token_length": len(tokens),
+                "complete_stroke_window_count": len(window_lengths),
+                "maximum_window_token_length": max(window_lengths),
             }
-            if len(tokens) > config.max_sequence_length:
+            if max(window_lengths) > config.max_sequence_length:
                 rejected.append(
                     RejectedSample(
                         sample_id=variant_id,
@@ -324,7 +354,8 @@ def build_dataset(
                         source_sha256=sample.source_sha256,
                         perceptual_hash=sample.perceptual_hash,
                         rejection_reason=(
-                            f"overlength:{len(tokens)}>{config.max_sequence_length}"
+                            "single_stroke_overlength:"
+                            f"{max(window_lengths)}>{config.max_sequence_length}"
                         ),
                         preprocessing=preprocessing,
                         group_id=sample.group_id,
@@ -394,6 +425,8 @@ def build_dataset(
             "canvas_size": 256,
             "canvas_margin": 8,
             "maximum_token_length": config.max_sequence_length,
+            "overlength_strategy": "complete_stroke_windows",
+            "full_drawings_stored_without_truncation": True,
             "rdp_epsilon_candidates": list(config.epsilon_candidates),
             "calibration_size": config.calibration_size,
             "source_vector_f1_gate": config.source_vector_f1_gate,
@@ -644,11 +677,38 @@ def _stratified_calibration(
     return [ordered[int(index)] for index in indices]
 
 
+def _complete_stroke_window_lengths(
+    tokens: Sequence[int] | np.ndarray,
+    *,
+    max_sequence_length: int,
+) -> list[int]:
+    """Pack complete V3 strokes into model-length windows without truncation."""
+
+    values = np.asarray(tokens, dtype=np.int64)
+    starts = np.flatnonzero(values == TOKEN_LAYOUT.stroke_start_token_id).tolist()
+    ends = (np.flatnonzero(values == TOKEN_LAYOUT.stroke_end_token_id) + 1).tolist()
+    if len(starts) != len(ends) or not starts:
+        raise ValueError("invalid anchored-V3 sequence: unbalanced or missing strokes")
+
+    window_lengths: list[int] = []
+    current_length = 2  # SOS and EOS are added around every complete-stroke window.
+    for start, end in zip(starts, ends):
+        if start >= end:
+            raise ValueError("invalid anchored-V3 stroke ordering")
+        stroke_length = int(end - start)
+        if current_length > 2 and current_length + stroke_length > max_sequence_length:
+            window_lengths.append(current_length)
+            current_length = 2
+        current_length += stroke_length
+    window_lengths.append(current_length)
+    return window_lengths
+
+
 def _validate_config(config: BuilderConfig) -> None:
     if not config.epsilon_candidates or any(value < 0 for value in config.epsilon_candidates):
         raise ValueError("epsilon_candidates must contain non-negative values")
-    if config.max_sequence_length <= 0:
-        raise ValueError("max_sequence_length must be positive")
+    if config.max_sequence_length < 7:
+        raise ValueError("max_sequence_length must be at least 7")
     if config.train_augmentation_copies < 0:
         raise ValueError("train_augmentation_copies must be non-negative")
     if config.minimum_accepted_source_sketches <= 0:

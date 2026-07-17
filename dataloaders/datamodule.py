@@ -312,6 +312,7 @@ class CompleteStrokeWindowDataset(Dataset):
         eos_token_id: int,
         stroke_start_token_id: int,
         stroke_end_token_id: int,
+        maximum_windows_per_sample: int | None = None,
     ) -> None:
         if max_length < 7:
             raise ValueError("anchored-V3 windows require max_length >= 7")
@@ -321,14 +322,23 @@ class CompleteStrokeWindowDataset(Dataset):
         self.eos_token_id = int(eos_token_id)
         self.stroke_start_token_id = int(stroke_start_token_id)
         self.stroke_end_token_id = int(stroke_end_token_id)
+        if maximum_windows_per_sample is not None and maximum_windows_per_sample <= 0:
+            raise ValueError("maximum_windows_per_sample must be positive")
+        self.maximum_windows_per_sample = (
+            int(maximum_windows_per_sample)
+            if maximum_windows_per_sample is not None
+            else None
+        )
+        self.metadata = getattr(dataset, "metadata", None)
         self._windows: list[tuple[int, int, int]] = []
         self._lengths: list[int] = []
         self._build_windows()
         if not self._windows:
-            raise ValueError("anchored-V3 curriculum produced no complete-stroke windows")
+            raise ValueError("anchored-V3 windowing produced no complete-stroke windows")
 
     def _build_windows(self) -> None:
         for dataset_index in range(len(self.dataset)):
+            first_window_index = len(self._windows)
             sample = self.dataset[dataset_index]
             tokens = sample["tokens"]
             spans = self._stroke_spans(tokens)
@@ -340,7 +350,8 @@ class CompleteStrokeWindowDataset(Dataset):
                 if proposed_length > self.max_length:
                     if window_start is None or window_end is None:
                         raise ValueError(
-                            f"single anchored-V3 stroke exceeds curriculum max_length={self.max_length}"
+                            "single anchored-V3 stroke exceeds configured "
+                            f"max_length={self.max_length}"
                         )
                     self._append_window(dataset_index, window_start, window_end)
                     window_start = start
@@ -349,6 +360,27 @@ class CompleteStrokeWindowDataset(Dataset):
                 window_end = end
             if window_start is not None and window_end is not None:
                 self._append_window(dataset_index, window_start, window_end)
+            self._limit_sample_windows(first_window_index)
+
+    def _limit_sample_windows(self, first_window_index: int) -> None:
+        maximum = self.maximum_windows_per_sample
+        count = len(self._windows) - first_window_index
+        if maximum is None or count <= maximum:
+            return
+        if maximum == 1:
+            selected_offsets = [count // 2]
+        else:
+            selected_offsets = [
+                round(position * (count - 1) / (maximum - 1))
+                for position in range(maximum)
+            ]
+        selected_indices = [first_window_index + offset for offset in selected_offsets]
+        self._windows[first_window_index:] = [
+            self._windows[index] for index in selected_indices
+        ]
+        self._lengths[first_window_index:] = [
+            self._lengths[index] for index in selected_indices
+        ]
 
     def _append_window(self, dataset_index: int, start: int, end: int) -> None:
         length = 2 + (end - start)
@@ -429,23 +461,17 @@ class StrokeSequenceDataModule:
             self.setup("fit")
         assert self.train_dataset is not None
         dataset: Any = self.train_dataset
-        if max_sequence_length is not None:
-            if self.format_type == "anchored_v3":
-                token_dictionary = _get(self.config, "format.token_dictionary", {})
-                dataset = CompleteStrokeWindowDataset(
-                    self.train_dataset,
-                    int(max_sequence_length),
-                    sos_token_id=int(token_dictionary["sos_token_id"]),
-                    eos_token_id=int(token_dictionary["eos_token_id"]),
-                    stroke_start_token_id=int(token_dictionary["stroke_start_token_id"]),
-                    stroke_end_token_id=int(token_dictionary["stroke_end_token_id"]),
-                )
-            else:
-                dataset = SequenceLengthSubset(
-                    self.train_dataset,
-                    self.train_dataset.lengths,
-                    int(max_sequence_length),
-                )
+        if self.format_type == "anchored_v3":
+            dataset = self._anchored_windows(
+                self.train_dataset,
+                max_sequence_length,
+            )
+        elif max_sequence_length is not None:
+            dataset = SequenceLengthSubset(
+                self.train_dataset,
+                self.train_dataset.lengths,
+                int(max_sequence_length),
+            )
         return self._make_loader(dataset, split="train")
 
     def val_dataloader(
@@ -459,7 +485,12 @@ class StrokeSequenceDataModule:
             self.setup("fit")
         assert self.valid_dataset is not None
         dataset: Any = self.valid_dataset
-        if max_sequence_length is not None:
+        if self.format_type == "anchored_v3":
+            dataset = self._anchored_windows(
+                self.valid_dataset,
+                max_sequence_length,
+            )
+        elif max_sequence_length is not None:
             dataset = SequenceLengthSubset(
                 self.valid_dataset,
                 self.valid_dataset.lengths,
@@ -489,7 +520,36 @@ class StrokeSequenceDataModule:
         if self.test_dataset is None:
             self.setup("test")
         assert self.test_dataset is not None
-        return self._make_loader(self.test_dataset, split="test")
+        dataset: Any = self.test_dataset
+        if self.format_type == "anchored_v3":
+            dataset = self._anchored_windows(self.test_dataset, None)
+        return self._make_loader(dataset, split="test")
+
+    def _anchored_windows(
+        self,
+        dataset: AnchoredV3Dataset,
+        max_sequence_length: int | None,
+    ) -> CompleteStrokeWindowDataset:
+        token_dictionary = _get(self.config, "format.token_dictionary", {})
+        maximum_windows = _get(
+            self.config,
+            "dataset.maximum_windows_per_sample",
+        )
+        return CompleteStrokeWindowDataset(
+            dataset,
+            int(
+                max_sequence_length
+                if max_sequence_length is not None
+                else _get(self.config, "sequence.max_length")
+            ),
+            sos_token_id=int(token_dictionary["sos_token_id"]),
+            eos_token_id=int(token_dictionary["eos_token_id"]),
+            stroke_start_token_id=int(token_dictionary["stroke_start_token_id"]),
+            stroke_end_token_id=int(token_dictionary["stroke_end_token_id"]),
+            maximum_windows_per_sample=(
+                int(maximum_windows) if maximum_windows is not None else None
+            ),
+        )
 
     def _make_dataset(self, split: str) -> StrokeSequenceDataset | AnchoredV3Dataset:
         root = Path(_get(self.config, "dataset.root"))
@@ -509,7 +569,11 @@ class StrokeSequenceDataModule:
                 )
             transform = TokenSequenceTransform(
                 split=split,
-                max_length=int(_get(self.config, "sequence.max_length")),
+                max_length=(
+                    None
+                    if self.format_type == "anchored_v3"
+                    else int(_get(self.config, "sequence.max_length"))
+                ),
                 truncate_long_sequences=bool(
                     _get(self.config, "sequence.truncate_long_sequences", True)
                 ),

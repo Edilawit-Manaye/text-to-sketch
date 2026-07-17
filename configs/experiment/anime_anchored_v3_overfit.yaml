@@ -14,6 +14,7 @@ overrides:
       train_source_limit: 32
       include_augmentations: false
       source_subset_strategy: length_stratified
+      maximum_windows_per_sample: 1
   trainer:
     runtime:
       precision: 32-true

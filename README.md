@@ -379,6 +379,14 @@ progress bars.
 Use `--no-progress` only for quiet automation. This preprocessing stage is CPU
 bound; the RTX 3090 is used later during model training, not during this build.
 
+Calibration records the full-drawing token length for diagnostics, but applies
+the 4,096-token model limit to complete-stroke windows. Full drawings are stored
+without truncation and model-facing loaders pack their strokes into deterministic
+windows with fresh SOS/EOS tokens. A sample is rejected only when one individual
+stroke cannot fit in a window. Once an epsilon passes, its training-split
+simplifications are reused during encoding; validation and test sketches are
+simplified only once with the selected epsilon.
+
 The command publishes an immutable directory named
 `anchored_v3-<content-hash>` and atomically updates the relative `current`
 symlink. Validate the printed immutable path before training.
