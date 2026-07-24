@@ -70,7 +70,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--max-generation-length", type=int, default=None)
     parser.add_argument(
-        "--enforce-v2-gates",
+        "--enforce-long-sequence-gates",
         action="store_true",
         help="Require a non-empty 2049-4096 bucket with median geometry F1 >= 0.90.",
     )
@@ -103,8 +103,8 @@ def _load_codebook_for_plots(config: dict[str, Any]) -> Any:
 
 def main() -> int:
     args = parse_args()
-    if args.enforce_v2_gates and args.decode_mode != "free-running":
-        raise ValueError("--enforce-v2-gates requires --decode-mode free-running")
+    if args.enforce_long_sequence_gates and args.decode_mode != "free-running":
+        raise ValueError("--enforce-long-sequence-gates requires --decode-mode free-running")
     config = compose_training_config(args.config, experiment=args.experiment)
     if args.data_root:
         config["data"]["dataset"]["root"] = args.data_root
@@ -202,7 +202,7 @@ def main() -> int:
         )
     print(format_logs(summary))
 
-    if args.enforce_v2_gates:
+    if args.enforce_long_sequence_gates:
         metric_prefix = f"{args.split}/free_running"
         count = float(summary[f"{metric_prefix}/count_length_2049_4096"])
         median_f1 = float(
@@ -210,7 +210,7 @@ def main() -> int:
         )
         if count <= 0 or median_f1 < 0.90:
             raise SystemExit(
-                "V2 free-running gate failed: "
+                "Long-sequence free-running gate failed: "
                 f"count_2049_4096={count:.0f} median_f1={median_f1:.4f}"
             )
 
@@ -229,7 +229,7 @@ def main() -> int:
                 "limit_batches": args.limit_batches,
                 "decode_mode": args.decode_mode,
                 "max_generation_length": args.max_generation_length,
-                "enforce_v2_gates": args.enforce_v2_gates,
+                "enforce_long_sequence_gates": args.enforce_long_sequence_gates,
             },
         )
         print(f"[metrics] wrote {metrics_path}")

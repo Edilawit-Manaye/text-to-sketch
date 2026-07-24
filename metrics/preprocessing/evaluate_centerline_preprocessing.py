@@ -1,4 +1,4 @@
-"""Benchmark faithful centerline preprocessing on a fixed sketch sample."""
+"""Benchmark centerline preprocessing on a fixed sketch sample."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from pipeline.vectorization import (
     rasterize_strokes,
     read_grayscale_image,
 )
-from pipeline.workflow import fit_faithful_sequence
+from pipeline.workflow import fit_centerline_sequence
 from utils.paths import DEFAULT_FILTERED_SKETCHES_DIR, DEFAULT_SKETCH_TOKEN_DIR
 from utils.tokenizer import ErrorFeedbackQuantizer, decode_tokens
 
@@ -48,7 +48,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("data/processed/evaluations/faithful_v2_preprocessing.json"),
+        default=Path("data/processed/evaluations/centerline_preprocessing.json"),
     )
     parser.add_argument(
         "--review-dir",
@@ -73,7 +73,7 @@ def evaluate_profile(
     rows: list[dict[str, float | int | str | bool]] = []
     for path in paths:
         try:
-            result = fit_faithful_sequence(
+            result = fit_centerline_sequence(
                 image_path=path,
                 codebook=codebook,
                 quantizer=quantizer,
@@ -217,7 +217,7 @@ def write_manual_review_set(
     output_dir.mkdir(parents=True, exist_ok=True)
     checklist: list[dict[str, object]] = []
     for index, path in enumerate(paths, start=1):
-        result = fit_faithful_sequence(
+        result = fit_centerline_sequence(
             image_path=path,
             codebook=codebook,
             quantizer=quantizer,
@@ -375,7 +375,7 @@ def main() -> int:
                 f"{summary['quantization_endpoint_error_p95']:.6f}"
             )
         if failures:
-            raise SystemExit("faithful V2 quality gate failed: " + ", ".join(failures))
+            raise SystemExit("centerline quality gate failed: " + ", ".join(failures))
     return 0
 
 

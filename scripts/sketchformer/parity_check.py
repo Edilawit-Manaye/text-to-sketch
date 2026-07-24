@@ -32,7 +32,7 @@ from scripts.sketchformer.train import _load_state_dict_file
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="configs/train.yaml")
-    parser.add_argument("--experiment", default="anime_tok_dict_long_v2")
+    parser.add_argument("--experiment", default="anime_tok_dict_long")
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--reference-npz", default=None)
     parser.add_argument("--sequence-length", type=int, default=200)

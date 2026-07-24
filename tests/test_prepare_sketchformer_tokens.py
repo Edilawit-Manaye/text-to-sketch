@@ -41,7 +41,7 @@ class PrepareSketchformerTokensTest(unittest.TestCase):
         self.assertEqual(decoded[-1].tolist(), [0.0, 0.0, 0.0, 0.0, 1.0])
         self.assertEqual(decoded[1].tolist(), [1.0, 0.0, 0.0, 1.0, 0.0])
 
-    def test_preencoded_v2_tokens_load_without_requantization(self) -> None:
+    def test_preencoded_tokens_load_without_requantization(self) -> None:
         expected = np.asarray([1002, 17, 1001, 1003], dtype=np.int32)
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "sample.npz"

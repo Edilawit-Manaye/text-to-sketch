@@ -83,7 +83,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--tokens-dir",
         default=None,
-        help="Use pre-encoded V2 token .npz files instead of re-encoding stroke5.",
+        help="Use pre-encoded token .npz files instead of re-encoding stroke5.",
     )
     parser.add_argument(
         "--token-dict-dir",

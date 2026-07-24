@@ -1,4 +1,4 @@
-"""Core workflows for legacy and faithful long-sequence preprocessing."""
+"""Core workflows for centerline and legacy contour preprocessing."""
 
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ def run_pipeline(
     codebook_K: int = 1000,
     seed: int = 42,
     *,
-    vectorizer: str = "contour",
+    vectorizer: str = "centerline",
     threshold_profile: str = "hysteresis",
     max_token_length: int | None = None,
     max_geometry_error: float = DEFAULT_MAX_GEOMETRY_ERROR,
@@ -69,7 +69,7 @@ def run_pipeline(
     fail_on_overlength: bool = False,
     extractor_name: str | None = None,
 ) -> None:
-    """Run V1 preprocessing or the checkpoint-compatible V2 centerline path."""
+    """Run the default centerline preprocessing path or legacy contour path."""
 
     all_sketches = sorted(Path(sketches_dir).rglob("*.png"))
     if not all_sketches:
@@ -85,7 +85,7 @@ def run_pipeline(
     count = min(int(n_sketches), len(all_sketches))
     samples = random.Random(seed).sample(all_sketches, count)
     if vectorizer == "centerline":
-        _run_faithful_pipeline(
+        _run_centerline_pipeline(
             samples=samples,
             sketches_dir=Path(sketches_dir),
             stroke5_dir=Path(stroke5_dir),
@@ -113,7 +113,7 @@ def run_pipeline(
     )
 
 
-def _run_faithful_pipeline(
+def _run_centerline_pipeline(
     *,
     samples: list[Path],
     sketches_dir: Path,
@@ -146,18 +146,18 @@ def _run_faithful_pipeline(
     quantizer = ErrorFeedbackQuantizer(codebook)
     codebook_sha256 = hashlib.sha256(codebook_path.read_bytes()).hexdigest()
 
-    token_dir = stroke5_dir.parent / "tokens-v2"
-    resolved_manifest = manifest_path or stroke5_dir.parent / "v2_manifest.jsonl"
+    token_dir = stroke5_dir.parent / "tokens"
+    resolved_manifest = manifest_path or stroke5_dir.parent / "preprocessing_manifest.jsonl"
     records: list[dict[str, Any]] = []
     accepted = overlength = failed = 0
 
     print(
-        f"[pipeline-v2] sketches={len(samples)} vectorizer=centerline "
+        f"[pipeline] sketches={len(samples)} vectorizer=centerline "
         f"ordering={ordering} max_tokens={max_token_length}"
     )
-    print(f"[pipeline-v2] token_dictionary={codebook_path}")
+    print(f"[pipeline] token_dictionary={codebook_path}")
 
-    for image_path in tqdm(samples, desc="Faithful V2", unit="sketch"):
+    for image_path in tqdm(samples, desc="Centerline", unit="sketch"):
         relative = image_path.relative_to(sketches_dir)
         base_record: dict[str, Any] = {
             "schema_version": 2,
@@ -172,10 +172,10 @@ def _run_faithful_pipeline(
             "token_dictionary_path": str(codebook_path),
             "token_dictionary_size": len(codebook),
             "token_dictionary_sha256": codebook_sha256,
-            "quantizer": "error_feedback_pair_search_v2",
+            "quantizer": "error_feedback_pair_search",
         }
         try:
-            result = fit_faithful_sequence(
+            result = fit_centerline_sequence(
                 image_path=image_path,
                 codebook=codebook,
                 quantizer=quantizer,
@@ -211,11 +211,11 @@ def _run_faithful_pipeline(
             failed += 1
             base_record.update({"status": "error", "rejection_reason": str(exc)})
             records.append(base_record)
-            tqdm.write(f"[pipeline-v2] error {image_path.name}: {exc}")
+            tqdm.write(f"[pipeline] error {image_path.name}: {exc}")
 
     _write_manifest(resolved_manifest, records)
     print(
-        f"[pipeline-v2] accepted={accepted} overlength={overlength} errors={failed} "
+        f"[pipeline] accepted={accepted} overlength={overlength} errors={failed} "
         f"manifest={resolved_manifest}"
     )
     if fail_on_overlength and overlength:
@@ -227,7 +227,7 @@ def _run_faithful_pipeline(
         raise RuntimeError(f"No sketches were accepted; see {resolved_manifest}")
 
 
-def fit_faithful_sequence(
+def fit_centerline_sequence(
     *,
     image_path: Path,
     codebook: np.ndarray,
@@ -392,12 +392,12 @@ def _run_legacy_pipeline(
     """Retain the original contour/kinematics workflow for reproducibility."""
 
     print(
-        f"[pipeline-v1] sketches={len(samples)} ordering={ordering} "
+        f"[pipeline-legacy] sketches={len(samples)} ordering={ordering} "
         f"RDP={rdp_epsilon:g} K={codebook_K}"
     )
     successful: list[tuple[np.ndarray, Path]] = []
     skipped = 0
-    for image_path in tqdm(samples, desc="Legacy V1", unit="sketch"):
+    for image_path in tqdm(samples, desc="Legacy contour", unit="sketch"):
         try:
             strokes = vectorize_image(image_path, epsilon=rdp_epsilon, method="contour")
             ordered = order_fn(strokes)
@@ -409,7 +409,7 @@ def _run_legacy_pipeline(
             successful.append((stroke5, image_path))
             save_stroke5(stroke5, stroke5_dir / f"{image_path.stem}.npz")
         except Exception as exc:
-            tqdm.write(f"[pipeline-v1] skip {image_path.name}: {exc}")
+            tqdm.write(f"[pipeline-legacy] skip {image_path.name}: {exc}")
             skipped += 1
 
     if not successful:
@@ -427,4 +427,4 @@ def _run_legacy_pipeline(
     for stroke5, image_path in successful:
         tokens = encode_stroke5(stroke5, codebook)
         save_token_sequence(tokens, token_dir / f"{image_path.stem}.npz")
-    print(f"[pipeline-v1] accepted={len(successful)} skipped={skipped}")
+    print(f"[pipeline-legacy] accepted={len(successful)} skipped={skipped}")

@@ -28,7 +28,7 @@ from scripts.sketchformer.config import compose_training_config
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="configs/train.yaml")
-    parser.add_argument("--experiment", default="anime_tok_dict_long_v2")
+    parser.add_argument("--experiment", default="anime_tok_dict_long")
     parser.add_argument("--sequence-length", type=int, default=4096)
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--max-memory-gb", type=float, default=22.0)

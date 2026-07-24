@@ -1,4 +1,4 @@
-"""Deterministic readiness eval for faithful 4096-token preprocessing/training."""
+"""Deterministic readiness eval for 4096-token preprocessing/training."""
 
 from __future__ import annotations
 
@@ -36,12 +36,12 @@ from utils.tokenizer import (
 def main() -> int:
     config = compose_training_config(
         "configs/train.yaml",
-        experiment="anime_tok_dict_long_v2",
+        experiment="anime_tok_dict_long",
     )
     if int(config["model"]["input"]["max_seq_len"]) != 4096:
-        raise AssertionError("V2 model max_seq_len is not 4096")
+        raise AssertionError("Long-sequence model max_seq_len is not 4096")
     if bool(config["data"]["sequence"]["truncate_long_sequences"]):
-        raise AssertionError("V2 data must refuse truncation")
+        raise AssertionError("Long-sequence data must refuse truncation")
 
     image = np.full((64, 64), 255, dtype=np.uint8)
     cv2.line(image, (8, 32), (56, 32), 0, thickness=7)
@@ -109,7 +109,7 @@ def main() -> int:
         raise AssertionError("checkpoint parity metric gate failed")
 
     report = {
-        "eval": "long_sequence_v2",
+        "eval": "long_sequence",
         "status": "pass",
         "max_seq_len": 4096,
         "centerline_strokes": len(strokes),

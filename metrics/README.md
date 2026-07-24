@@ -11,9 +11,9 @@ These modules evaluate the sketch extraction and vectorization pipeline:
 - `preprocessing/evaluate_encoder.py` checks sketch-token encode/decode
   reconstruction error.
 - `preprocessing/evaluate_ordering.py` visualizes stroke ordering strategies.
-- `preprocessing/evaluate_faithful_v2.py` compares extractor/threshold
+- `preprocessing/evaluate_centerline_preprocessing.py` compares extractor/threshold
   profiles on common source images, reports token-decoded fidelity and drift,
-  enforces the V2 gates, and writes manual-review pairs.
+  enforces the centerline gates, and writes manual-review pairs.
 - `preprocessing/visualisation.py` contains plotting helpers for
   original-vs-simplified sketches.
 
@@ -38,7 +38,7 @@ python scripts/sketchformer/evaluate.py \
   --num-plots 8
 ```
 
-Final V2 evaluation defaults to free-running cached decoding and reports the
+Final long-sequence evaluation defaults to free-running cached decoding and reports the
 geometry F1 separately for 1-512, 513-1024, 1025-2048, and 2049-4096 token
 groups, including per-bucket medians. During early fine-tuning, prioritize:
 

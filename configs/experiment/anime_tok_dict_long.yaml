@@ -1,9 +1,9 @@
-name: anime_tok_dict_long_v2
-description: Faithful 4096-token curriculum fine-tuning from the released tok-dict checkpoint.
+name: anime_tok_dict_long
+description: 4096-token curriculum fine-tuning from the released tok-dict checkpoint.
 
 run:
-  id: anime-tok-dict-long-v2
-  output_dir: weights/finetuned/sketchformer-tok-dict-anime-v2-4096
+  id: anime-tok-dict-long
+  output_dir: weights/finetuned/sketchformer-tok-dict-anime-4096
   resume_from_checkpoint: null
 
 pretrained:
@@ -13,9 +13,9 @@ pretrained:
 
 overrides:
   data:
-    name: anime_tok_dict_long_v2
+    name: anime_tok_dict_long
     dataset:
-      root: data/processed/sketchformer-ready-data/tok-dict-v2-4096
+      root: data/processed/sketchformer-ready-data/tok-dict-4096
     sequence:
       max_length: 4096
       target_max_length: 4096

@@ -20,11 +20,11 @@ to run on the GPU server.
 
 | Area | Status |
 |---|---|
-| Anime image preprocessing | Implemented. Downloads portraits, extracts line art, filters sketches, vectorizes contours, orders strokes, and writes stroke-5 files. |
+| Anime image preprocessing | Implemented. Downloads portraits, extracts line art, filters sketches, vectorizes centerlines, orders strokes, and writes stroke-5 files. |
 | Sketchformer-ready data | Implemented. Builds a sketch token dictionary and converts stroke-5 sketches into chunked tok-dict `.npz` files with train/valid/test splits. Continuous stroke3 prep remains available for legacy experiments. |
 | Original Sketchformer handoff | Implemented as a Docker command launcher. The bundled image is CPU-oriented; GPU use requires a custom compatible image. |
 | Native PyTorch Sketchformer | Implemented for tok-dict reconstruction with SDPA attention, gradient checkpointing, length-bucketed loading, masked token cross entropy, token accuracy/perplexity metrics, codebook-decoded plots, evaluation, and export. |
-| Native fine-tuning from converted TF weights | Implemented for the released tok-dict checkpoint, including the 200-position checkpoint base and zero-initialized 4096-position V2 residual. |
+| Native fine-tuning from converted TF weights | Implemented for the released tok-dict checkpoint, including the 200-position checkpoint base and zero-initialized 4096-position residual. |
 | Text prompt conditioning | Not implemented in the current codebase. The present focus is anime sketch sequence modeling. |
 
 ## Pipeline Overview
@@ -177,24 +177,24 @@ tts-prepare-sketchformer-tokens \
   --n-chunks 10
 ```
 
-## Faithful 4096-token V2 Workflow
+## 4096-token Centerline Workflow
 
-V2 preserves grayscale confidence, removes contour-boundary duplication and
-synthetic kinematic resampling, uses the released dictionary with error
-feedback, and refuses to truncate complete sketches. Existing extracted binary
-PNGs cannot recover grayscale confidence, so start V2 extraction from the raw
-images.
+The default centerline workflow preserves grayscale confidence, removes
+contour-boundary duplication and synthetic kinematic resampling, uses the
+released dictionary with error feedback, and refuses to truncate complete
+sketches. Existing extracted binary PNGs cannot recover grayscale confidence,
+so start extraction from the raw images.
 
 ```bash
 tts-extract-sketches \
   --input-dir data/raw/portraits \
-  --output-dir data/processed/sketches-v2 \
+  --output-dir data/processed/sketches \
   --extractor lineart-anime \
   --max-images 0
 
 tts-extract-sketches \
   --input-dir data/raw/portraits \
-  --output-dir data/processed/sketches-v2 \
+  --output-dir data/processed/sketches \
   --extractor anime2sketch \
   --anime2sketch-dir dependencies/Anime2Sketch \
   --anime2sketch-python dependencies/Anime2Sketch/.venv/bin/python \
@@ -205,14 +205,14 @@ tts-create-sketch-token-dict \
   --source-token-dict-pkl sketchformer/prep_data/sketch_token/token_dict.pkl \
   --output-dir data/processed/sketch_token
 
-tts-evaluate-faithful-v2 \
-  --extractor-dir lineart-anime=data/processed/sketches-v2/lineart_anime \
-  --extractor-dir anime2sketch=data/processed/sketches-v2/anime2sketch \
+tts-evaluate-centerline-preprocessing \
+  --extractor-dir lineart-anime=data/processed/sketches/lineart_anime \
+  --extractor-dir anime2sketch=data/processed/sketches/anime2sketch \
   --token-dict-dir data/processed/sketch_token \
   --samples 100 \
   --max-token-length 4096 \
-  --review-dir data/processed/evaluations/faithful_v2_manual_review \
-  --output data/processed/evaluations/faithful_v2_preprocessing.json \
+  --review-dir data/processed/evaluations/centerline_manual_review \
+  --output data/processed/evaluations/centerline_preprocessing.json \
   --enforce
 ```
 
@@ -223,13 +223,13 @@ contain at least 10,000 accepted sketches; 25,000 is the target dataset size.
 
 ```bash
 tts-filter-sketches \
-  --input-dir data/processed/sketches-v2/lineart_anime \
-  --output-dir data/processed/sketches-filtered-v2 \
+  --input-dir data/processed/sketches/lineart_anime \
+  --output-dir data/processed/sketches-filtered \
   --max-points 20000
 
 tts-run-pipeline \
-  --sketches-dir data/processed/sketches-filtered-v2 \
-  --stroke5-dir data/processed/stroke5-v2-4096 \
+  --sketches-dir data/processed/sketches-filtered \
+  --stroke5-dir data/processed/stroke5-4096 \
   --token-dict-dir data/processed/sketch_token \
   --extractor-name lineart-anime \
   --n-sketches 10000 \
@@ -239,23 +239,23 @@ tts-run-pipeline \
   --rdp-epsilon 0.5 \
   --max-geometry-error 2.0 \
   --max-token-length 4096 \
-  --manifest data/processed/v2_manifest.jsonl \
+  --manifest data/processed/preprocessing_manifest.jsonl \
   --fail-on-overlength
 
 tts-prepare-sketchformer-tokens \
-  --tokens-dir data/processed/tokens-v2 \
+  --tokens-dir data/processed/tokens \
   --token-dict-dir data/processed/sketch_token \
-  --target-dir data/processed/sketchformer-ready-data/tok-dict-v2-4096 \
+  --target-dir data/processed/sketchformer-ready-data/tok-dict-4096 \
   --max-length 4096 \
   --overlength-policy error \
   --n-chunks 10
 ```
 
-Convert a separate V2 checkpoint. TensorFlow is needed only for this command:
+Convert a separate long-sequence checkpoint. TensorFlow is needed only for this command:
 
 ```bash
 tts-convert-sketchformer-checkpoint \
-  --experiment anime_tok_dict_long_v2 \
+  --experiment anime_tok_dict_long \
   --source weights/pretrained/sketch-transformer-tf2-cvpr_tform_tok_dict/weights/ckpt-12 \
   --output weights/pretrained/sketchformer_tok_dict_4096_init.safetensors
 ```
@@ -269,24 +269,24 @@ Run the server gates and curriculum training:
 
 ```bash
 tts-train-sketchformer \
-  --experiment anime_tok_dict_long_v2 \
+  --experiment anime_tok_dict_long \
   --device cuda \
   --precision 16-mixed \
   --dry-run
 
 tts-check-sketchformer-parity \
-  --experiment anime_tok_dict_long_v2 \
+  --experiment anime_tok_dict_long \
   --checkpoint weights/pretrained/sketchformer_tok_dict_4096_init.safetensors \
   --device cpu
 
 tts-check-sketchformer-memory \
-  --experiment anime_tok_dict_long_v2 \
+  --experiment anime_tok_dict_long \
   --sequence-length 4096 \
   --batch-size 1 \
   --max-memory-gb 22
 
 tts-train-sketchformer \
-  --experiment anime_tok_dict_long_v2 \
+  --experiment anime_tok_dict_long \
   --device cuda \
   --precision 16-mixed
 ```
@@ -295,15 +295,15 @@ Evaluate the best checkpoint without teacher forcing:
 
 ```bash
 tts-evaluate-sketchformer \
-  --experiment anime_tok_dict_long_v2 \
-  --checkpoint weights/finetuned/sketchformer-tok-dict-anime-v2-4096/best.pt \
+  --experiment anime_tok_dict_long \
+  --checkpoint weights/finetuned/sketchformer-tok-dict-anime-4096/best.pt \
   --split valid \
   --device cuda \
   --precision 16-mixed \
   --decode-mode free-running \
-  --enforce-v2-gates \
-  --metrics-output data/processed/evaluations/v2_free_running.json \
-  --plots-output-dir data/processed/evaluations/v2_free_running_plots
+  --enforce-long-sequence-gates \
+  --metrics-output data/processed/evaluations/long_sequence_free_running.json \
+  --plots-output-dir data/processed/evaluations/long_sequence_free_running_plots
 ```
 
 The final report must contain
@@ -343,7 +343,7 @@ The native path is the preferred direction for RTX 3090 training. It uses:
 - TF32 matmul enabled by default on CUDA
 - broadcast SDPA padding masks that avoid allocating batch-sized square masks
 - cached autoregressive decoding for free-running reconstruction
-- token-budget batching and staged 512/1024/2048/4096 V2 fine-tuning
+- token-budget batching and staged 512/1024/2048/4096 fine-tuning
 - masked token cross entropy over the sketch token dictionary
 - token accuracy and token perplexity validation metrics
 
@@ -459,7 +459,7 @@ Important configs:
 | `configs/trainer/single_gpu.yaml` | Single-GPU runtime, precision, checkpointing, and logging settings. |
 | `configs/experiment/smoke_test.yaml` | Tiny CPU-friendly dry-run/smoke settings. |
 | `configs/experiment/anime_tok_dict_finetune.yaml` | RTX 3090-oriented native tok-dict training experiment. |
-| `configs/experiment/anime_tok_dict_long_v2.yaml` | Faithful 4096-token curriculum with no truncation. |
+| `configs/experiment/anime_tok_dict_long.yaml` | 4096-token curriculum with no truncation. |
 | `configs/experiment/anime_continuous_finetune.yaml` | Legacy continuous stroke3 experiment. |
 
 The default root config trains the native tok-dict model. To use a custom token

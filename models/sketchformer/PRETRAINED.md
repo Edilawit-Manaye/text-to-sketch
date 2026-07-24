@@ -51,8 +51,8 @@ scripts/sketchformer/convert_checkpoint.py
 models/sketchformer/checkpoint_mapping.py
 ```
 
-For the faithful long-sequence path, use experiment
-`anime_tok_dict_long_v2`. It preserves the released 200-position dense
+For the long-sequence path, use experiment
+`anime_tok_dict_long`. It preserves the released 200-position dense
 expander and initializes the separate 4096-position residual to zero, while all
 shared encoder, decoder, embedding, pooling, and reconstruction tensors are
 mapped from the TensorFlow checkpoint.
@@ -61,7 +61,7 @@ After conversion, run the 200-token extension parity gate:
 
 ```bash
 tts-check-sketchformer-parity \
-  --experiment anime_tok_dict_long_v2 \
+  --experiment anime_tok_dict_long \
   --checkpoint weights/pretrained/sketchformer_tok_dict_4096_init.safetensors
 ```
 

@@ -1,4 +1,4 @@
-"""Raster line-art vectorization for legacy and faithful V2 pipelines."""
+"""Raster line-art vectorization for centerline and legacy contour pipelines."""
 
 from __future__ import annotations
 
@@ -226,7 +226,7 @@ def centerline_metrics(
 
 
 def source_centerline(image: np.ndarray, *, threshold_profile: str = "hysteresis") -> np.ndarray:
-    """Return the one-pixel topology used as the V2 geometry reference."""
+    """Return the one-pixel topology used as the centerline geometry reference."""
 
     return skeletonize(foreground_mask(image, profile=threshold_profile))
 

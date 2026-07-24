@@ -48,15 +48,15 @@ The default trainer config uses CUDA `16-mixed` precision and TF32-friendly
 runtime settings for an RTX 3090-class server. CPU development should use the
 `smoke_test` experiment or explicit CLI overrides.
 
-## Faithful 4096-token V2
+## 4096-token Long-Sequence Workflow
 
-`experiment/anime_tok_dict_long_v2.yaml` keeps the existing 2048-token run
-unchanged and defines the full V2 contract: separately converted weights,
+`experiment/anime_tok_dict_long.yaml` keeps the existing 2048-token run
+unchanged and defines the full long-sequence contract: separately converted weights,
 complete sequences with truncation disabled, token-budget batches, and the
 512/1024/2048/4096 length curriculum. Its dataset and checkpoint paths are
-versioned so V1 artifacts are never overwritten.
+separate from legacy artifacts.
 
-The V2-specific fields are:
+The long-sequence fields are:
 
 - `data.batching.max_tokens_per_batch: 4096`
 - `trainer.training.target_tokens_per_step: 32768`

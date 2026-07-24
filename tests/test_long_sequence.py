@@ -64,7 +64,7 @@ def _tiny_token_model() -> SketchformerModel:
     return SketchformerModel(config)
 
 
-class LongSequenceV2Test(unittest.TestCase):
+class LongSequenceTest(unittest.TestCase):
     def test_variable_batches_use_valid_token_weighted_metrics(self) -> None:
         logs = [
             {"val/token_loss": torch.tensor(1.0), "val/valid_tokens": torch.tensor(1.0)},
@@ -87,7 +87,7 @@ class LongSequenceV2Test(unittest.TestCase):
         self.assertEqual(extended.shape, (2, 16, 8))
         self.assertEqual(expander.long_weight.count_nonzero().item(), 0)
 
-    def test_v2_forward_builds_memory_for_current_batch_length(self) -> None:
+    def test_forward_builds_memory_for_current_batch_length(self) -> None:
         model = _tiny_token_model().eval()
         tokens = torch.tensor([[6, 1, 5, 7, 0, 0]], dtype=torch.long)
         batch = {"tokens": tokens, "targets": tokens.clone(), **build_sequence_masks([4], 6)}
@@ -169,10 +169,10 @@ class LongSequenceV2Test(unittest.TestCase):
         self.assertEqual(len(list(iter(sampler))), len(sampler))
         self.assertEqual(len(list(iter(sampler))), len(sampler))
 
-    def test_v2_curriculum_and_scope_are_decision_complete(self) -> None:
+    def test_curriculum_and_scope_are_decision_complete(self) -> None:
         config = compose_training_config(
             "configs/train.yaml",
-            experiment="anime_tok_dict_long_v2",
+            experiment="anime_tok_dict_long",
         )
         stages = parse_curriculum(config["trainer"], default_max_length=4096)
         model = _tiny_token_model()
@@ -190,7 +190,7 @@ class LongSequenceV2Test(unittest.TestCase):
     def test_curriculum_resume_skips_completed_epochs(self) -> None:
         config = compose_training_config(
             "configs/train.yaml",
-            experiment="anime_tok_dict_long_v2",
+            experiment="anime_tok_dict_long",
         )
         stages = parse_curriculum(config["trainer"], default_max_length=4096)
 
@@ -201,7 +201,7 @@ class LongSequenceV2Test(unittest.TestCase):
 
         self.assertEqual(offsets, [1, 1, 0, 0])
 
-    def test_v2_transform_refuses_to_truncate(self) -> None:
+    def test_transform_refuses_to_truncate(self) -> None:
         transform = TokenSequenceTransform(
             split="train",
             max_length=4,

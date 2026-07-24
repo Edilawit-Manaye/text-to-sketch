@@ -7,7 +7,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from metrics.preprocessing.evaluate_faithful_v2 import (
+from metrics.preprocessing.evaluate_centerline_preprocessing import (
     parse_extractor_dirs,
     select_common_samples,
 )
@@ -23,7 +23,7 @@ from pipeline.vectorization import (
 from utils.tokenizer import decode_tokens, encode_stroke5, quantization_metrics
 
 
-class FaithfulV2PreprocessingTest(unittest.TestCase):
+class CenterlinePreprocessingTest(unittest.TestCase):
     def test_empty_static_sketch_is_an_explicit_eos_sentinel(self) -> None:
         stroke5, _ = strokes_to_stroke5([], canvas_shape=(64, 64))
 

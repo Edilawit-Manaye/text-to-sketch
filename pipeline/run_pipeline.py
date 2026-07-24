@@ -21,7 +21,7 @@ from pipeline.workflow import run_pipeline
 
 _BANNER = """
 ╔════════════════════════════════════════════════════════════╗
-║          Faithful Sketch Pipeline V2                       ║
+║          Centerline Sketch Pipeline                        ║
 ║ Grayscale -> Centerline -> Stroke5 -> Released Tok-Dict    ║
 ╚════════════════════════════════════════════════════════════╝"""
 
@@ -36,7 +36,7 @@ _DEFAULT_ORDERING = "1"
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run faithful centerline or legacy contour sketch preprocessing."
+        description="Run centerline or legacy contour sketch preprocessing."
     )
     parser.add_argument(
         "--sketches-dir",
@@ -60,7 +60,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--token-dict-dir",
         type=Path,
         default=None,
-        help="Released token dictionary directory used by centerline V2.",
+        help="Released token dictionary directory used by centerline preprocessing.",
     )
     parser.add_argument(
         "--n-sketches",
@@ -78,7 +78,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--vectorizer",
         choices=VECTORIZERS,
         default="centerline",
-        help="centerline is the faithful V2 path; contour retains legacy V1 behavior.",
+        help="centerline is the default path; contour retains legacy behavior.",
     )
     parser.add_argument(
         "--threshold-profile",
@@ -89,7 +89,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--extractor-name",
         default=None,
-        help="Extractor profile recorded in the V2 manifest.",
+        help="Extractor profile recorded in the preprocessing manifest.",
     )
     parser.add_argument(
         "--rdp-epsilon",
@@ -107,7 +107,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--max-token-length",
         type=int,
         default=4096,
-        help="Reject V2 sketches that cannot fit this limit without excess geometry loss.",
+        help="Reject sketches that cannot fit this limit without excess geometry loss.",
     )
     parser.add_argument(
         "--max-geometry-error",
@@ -119,7 +119,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--manifest",
         type=Path,
         default=None,
-        help="V2 JSONL audit manifest path.",
+        help="JSONL audit manifest path.",
     )
     parser.add_argument(
         "--fail-on-overlength",
