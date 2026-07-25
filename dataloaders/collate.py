@@ -49,6 +49,7 @@ class Stroke3Collator:
         labels = torch.empty(len(samples), dtype=torch.long)
         source_indices = torch.empty(len(samples), dtype=torch.long)
         source_files: list[str] = []
+        sample_ids: list[str] = []
 
         for row, sample in enumerate(samples):
             sequence = np.asarray(sample["stroke3"], dtype=np.float32)
@@ -57,6 +58,7 @@ class Stroke3Collator:
             labels[row] = int(sample["label"])
             source_indices[row] = int(sample["source_index"])
             source_files.append(str(sample["source_file"]))
+            sample_ids.append(str(sample.get("sample_id", sample["source_index"])))
 
         lengths_tensor = torch.as_tensor(lengths, dtype=torch.long)
         masks = build_sequence_masks(
@@ -76,6 +78,7 @@ class Stroke3Collator:
             "labels": labels,
             "source_indices": source_indices,
             "source_files": source_files,
+            "sample_ids": sample_ids,
             **masks,
         }
 
@@ -85,7 +88,12 @@ class TokenSequenceCollator:
     """Pad tok-dict samples and build masks for attention/losses."""
 
     max_length: int | None = None
-    pad_token_id: int = 1002
+    pad_token_id: int = 0
+    sep_token_id: int | None = None
+    sos_token_id: int | None = None
+    eos_token_id: int | None = None
+    add_start_token: bool = True
+    add_end_token: bool = True
     pad_to_multiple_of: int | None = 8
     causal_attention: bool = False
     build_attention_mask: bool = True
@@ -94,11 +102,9 @@ class TokenSequenceCollator:
         if not samples:
             raise ValueError("Cannot collate an empty batch")
 
-        raw_lengths = [int(sample["length"]) for sample in samples]
-        lengths = [
-            min(length, self.max_length) if self.max_length is not None else length
-            for length in raw_lengths
-        ]
+        prepared = [self._prepare_sequence(sample["tokens"]) for sample in samples]
+        raw_lengths = [raw_length for _, raw_length in prepared]
+        lengths = [len(sequence) for sequence, _ in prepared]
         batch_max = max(lengths)
         if self.max_length is not None:
             batch_max = min(batch_max, self.max_length)
@@ -112,14 +118,16 @@ class TokenSequenceCollator:
         labels = torch.empty(len(samples), dtype=torch.long)
         source_indices = torch.empty(len(samples), dtype=torch.long)
         source_files: list[str] = []
+        sample_ids: list[str] = []
 
         for row, sample in enumerate(samples):
-            sequence = np.asarray(sample["tokens"], dtype=np.int64)
+            sequence = prepared[row][0]
             length = lengths[row]
-            tokens[row, :length] = torch.from_numpy(sequence[:length]).long()
+            tokens[row, :length] = torch.from_numpy(sequence).long()
             labels[row] = int(sample["label"])
             source_indices[row] = int(sample["source_index"])
             source_files.append(str(sample["source_file"]))
+            sample_ids.append(str(sample.get("sample_id", sample["source_index"])))
 
         lengths_tensor = torch.as_tensor(lengths, dtype=torch.long)
         masks = build_sequence_masks(
@@ -139,6 +147,41 @@ class TokenSequenceCollator:
             "labels": labels,
             "source_indices": source_indices,
             "source_files": source_files,
+            "sample_ids": sample_ids,
             "pad_token_id": int(self.pad_token_id),
             **masks,
         }
+
+    def _prepare_sequence(self, tokens: np.ndarray) -> tuple[np.ndarray, int]:
+        sequence = np.asarray(tokens, dtype=np.int64)
+        if sequence.ndim != 1:
+            raise ValueError(f"Expected token array with shape (N,), got {sequence.shape}")
+        if len(sequence) == 0:
+            raise ValueError("Token sequence is empty")
+
+        if (
+            self.add_start_token
+            and self.sos_token_id is not None
+            and int(sequence[0]) != int(self.sos_token_id)
+        ):
+            sequence = np.concatenate(
+                [np.asarray([self.sos_token_id], dtype=np.int64), sequence]
+            )
+        if (
+            self.add_end_token
+            and self.eos_token_id is not None
+            and int(sequence[-1]) != int(self.eos_token_id)
+        ):
+            sequence = np.concatenate(
+                [sequence, np.asarray([self.eos_token_id], dtype=np.int64)]
+            )
+
+        raw_length = int(len(sequence))
+        if self.max_length is not None and raw_length > self.max_length:
+            sequence = np.array(sequence[: self.max_length], copy=True, dtype=np.int64)
+            if self.add_end_token and self.eos_token_id is not None:
+                if len(sequence) > 1 and self.sep_token_id is not None:
+                    sequence[-2:] = [int(self.sep_token_id), int(self.eos_token_id)]
+                else:
+                    sequence[-1] = int(self.eos_token_id)
+        return sequence.astype(np.int64, copy=False), raw_length

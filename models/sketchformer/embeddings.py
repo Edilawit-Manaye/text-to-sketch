@@ -6,7 +6,7 @@ import torch
 from torch import nn
 
 from models.sketchformer.config import SketchformerConfig
-from models.sketchformer.positional_encoding import LearnedPositionalEncoding
+from models.sketchformer.positional_encoding import build_positional_encoding
 
 
 class Stroke3Embedding(nn.Module):
@@ -16,7 +16,8 @@ class Stroke3Embedding(nn.Module):
         super().__init__()
         self.xy_projection = nn.Linear(2, config.d_model)
         self.pen_embedding = nn.Embedding(config.pen_classes, config.d_model)
-        self.position = LearnedPositionalEncoding(
+        self.position = build_positional_encoding(
+            config.positional_encoding.type,
             config.positional_encoding.max_length,
             config.d_model,
         )
@@ -45,18 +46,20 @@ class TokenEmbedding(nn.Module):
             config.d_model,
             padding_idx=token_config.pad_token_id,
         )
-        self.position = LearnedPositionalEncoding(
+        self.scale = config.d_model ** 0.5
+        self.position = build_positional_encoding(
+            config.positional_encoding.type,
             config.positional_encoding.max_length,
             config.d_model,
         )
         self.dropout = nn.Dropout(config.dropout)
 
-    def forward(self, tokens: torch.Tensor) -> torch.Tensor:
+    def forward(self, tokens: torch.Tensor, *, position_offset: int = 0) -> torch.Tensor:
         if tokens.ndim != 2:
             raise ValueError("Expected tokens with shape (batch, sequence)")
 
-        x = self.token_embedding(tokens.long())
-        x = self.position(x)
+        x = self.token_embedding(tokens.long()) * self.scale
+        x = self.position(x, offset=position_offset)
         return self.dropout(x)
 
 
@@ -65,7 +68,9 @@ class DecoderQueryEmbedding(nn.Module):
 
     def __init__(self, config: SketchformerConfig) -> None:
         super().__init__()
-        self.position = nn.Embedding(
+        self.d_model = config.d_model
+        self.position = build_positional_encoding(
+            config.positional_encoding.type,
             config.positional_encoding.max_length,
             config.d_model,
         )
@@ -78,6 +83,6 @@ class DecoderQueryEmbedding(nn.Module):
         *,
         device: torch.device,
     ) -> torch.Tensor:
-        positions = torch.arange(sequence_length, device=device)
-        x = self.position(positions).unsqueeze(0).expand(batch_size, -1, -1)
+        x = torch.zeros(batch_size, sequence_length, self.d_model, device=device)
+        x = self.position(x)
         return self.dropout(x)
