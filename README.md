@@ -302,9 +302,16 @@ tts-evaluate-sketchformer \
   --precision 16-mixed \
   --decode-mode free-running \
   --enforce-long-sequence-gates \
+  --preprocessing-manifest data/processed/preprocessing_manifest.jsonl \
   --metrics-output data/processed/evaluations/long_sequence_free_running.json \
   --plots-output-dir data/processed/evaluations/long_sequence_free_running_plots
 ```
+
+Reconstruction plots use the manifest transform to show the original source,
+the codebook-decoded target, and the model prediction on the same source
+canvas. If source images moved, pass `--source-images-root` with their new
+root. Without usable manifest metadata, plotting falls back to a shared
+normalized two-panel raster canvas.
 
 The final report must contain
 `valid/free_running/geometry_f1_2px_median_length_2049_4096 >= 0.90`.
