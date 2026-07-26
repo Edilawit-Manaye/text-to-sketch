@@ -27,8 +27,10 @@ from core import average_logs, load_checkpoint, move_to_device
 from core.metrics import reconstruction_metrics
 from dataloaders import StrokeSequenceDataModule
 from metrics.sketchformer.reconstruction import (
+    attach_reconstruction_render_metadata,
     collect_generated_reconstruction_examples,
     collect_reconstruction_examples,
+    load_reconstruction_render_metadata,
     write_metrics_report,
 )
 from metrics.sketchformer.free_running import (
@@ -70,6 +72,22 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--max-generation-length", type=int, default=None)
     parser.add_argument(
+        "--preprocessing-manifest",
+        default=None,
+        help=(
+            "JSONL manifest containing source_path and Stroke5Transform metadata. "
+            "When omitted, nearby preprocessing_manifest.jsonl files are detected."
+        ),
+    )
+    parser.add_argument(
+        "--source-images-root",
+        default=None,
+        help=(
+            "Optional replacement root for manifest source_relative_path values, "
+            "useful when source images moved after preprocessing."
+        ),
+    )
+    parser.add_argument(
         "--enforce-long-sequence-gates",
         action="store_true",
         help="Require a non-empty 2049-4096 bucket with median geometry F1 >= 0.90.",
@@ -101,6 +119,54 @@ def _load_codebook_for_plots(config: dict[str, Any]) -> Any:
     )
 
 
+def _resolve_project_path(path: str | Path) -> Path:
+    candidate = Path(path)
+    return candidate if candidate.is_absolute() else PROJECT_ROOT / candidate
+
+
+def _discover_preprocessing_manifest(
+    config: dict[str, Any],
+    explicit_path: str | None,
+) -> Path | None:
+    if explicit_path:
+        manifest = _resolve_project_path(explicit_path)
+        if not manifest.is_file():
+            raise FileNotFoundError(f"Preprocessing manifest does not exist: {manifest}")
+        return manifest
+
+    dataset_root = _resolve_project_path(
+        str(get_nested(config, "data.dataset.root"))
+    )
+    candidates: list[Path] = []
+    report_path = dataset_root / "preparation_report.json"
+    if report_path.is_file():
+        import json
+
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        source_dir = report.get("source_dir")
+        if source_dir:
+            candidates.append(
+                _resolve_project_path(str(source_dir)).parent
+                / "preprocessing_manifest.jsonl"
+            )
+    candidates.extend(
+        [
+            dataset_root.parent / "preprocessing_manifest.jsonl",
+            dataset_root.parent.parent / "preprocessing_manifest.jsonl",
+        ]
+    )
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if resolved.is_file():
+            return resolved
+    return None
+
+
 def main() -> int:
     args = parse_args()
     if args.enforce_long_sequence_gates and args.decode_mode != "free-running":
@@ -129,6 +195,28 @@ def main() -> int:
     model.eval()
     needs_codebook = args.plots_output_dir or args.decode_mode == "free-running"
     codebook = _load_codebook_for_plots(config) if needs_codebook else None
+    render_metadata = {}
+    render_manifest = None
+    if args.plots_output_dir:
+        render_manifest = _discover_preprocessing_manifest(
+            config,
+            args.preprocessing_manifest,
+        )
+        if render_manifest is not None:
+            render_metadata = load_reconstruction_render_metadata(
+                render_manifest,
+                project_root=PROJECT_ROOT,
+                source_images_root=args.source_images_root,
+            )
+            print(
+                f"[plots] preprocessing_manifest={render_manifest} "
+                f"lookup_keys={len(render_metadata)}"
+            )
+        else:
+            print(
+                "[plots] no preprocessing manifest found; "
+                "using a shared normalized raster canvas"
+            )
 
     logs: list[dict[str, torch.Tensor]] = []
     free_running_records: list[dict[str, float | int | str]] = []
@@ -230,6 +318,10 @@ def main() -> int:
                 "decode_mode": args.decode_mode,
                 "max_generation_length": args.max_generation_length,
                 "enforce_long_sequence_gates": args.enforce_long_sequence_gates,
+                "preprocessing_manifest": (
+                    str(render_manifest) if render_manifest is not None else None
+                ),
+                "source_images_root": args.source_images_root,
             },
         )
         print(f"[metrics] wrote {metrics_path}")
@@ -237,6 +329,15 @@ def main() -> int:
     if args.plots_output_dir and examples:
         from metrics.sketchformer.visualisation import save_reconstruction_examples
 
+        if render_metadata:
+            examples = attach_reconstruction_render_metadata(
+                examples,
+                render_metadata,
+            )
+            matched = sum(
+                example.canvas_transform is not None for example in examples
+            )
+            print(f"[plots] manifest_matches={matched}/{len(examples)}")
         plot_dir = PROJECT_ROOT / args.plots_output_dir
         saved = save_reconstruction_examples(examples, plot_dir)
         print(f"[plots] wrote {len(saved)} reconstruction plots to {plot_dir}")

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -12,6 +12,7 @@ from typing import Any
 import numpy as np
 import torch
 
+from pipeline.stroke5 import Stroke5Transform
 from utils.tokenizer import decode_tokens
 
 
@@ -26,6 +27,16 @@ class ReconstructionExample:
     source_index: int
     label: int | None = None
     sample_id: str | None = None
+    source_image_path: str | None = None
+    canvas_transform: Stroke5Transform | None = None
+
+
+@dataclass(frozen=True)
+class ReconstructionRenderMetadata:
+    """Source-image context used to render a decoded reconstruction faithfully."""
+
+    source_image_path: str | None
+    canvas_transform: Stroke5Transform
 
 
 def prediction_to_stroke3(output: Any) -> torch.Tensor:
@@ -77,20 +88,19 @@ def collect_reconstruction_examples(
         if token_logits is not None
         else prediction_to_stroke3(output).detach().cpu().numpy()
     )
-    target_tensor = (
-        output.loss_targets
-        if getattr(output, "loss_targets", None) is not None
-        else batch["targets"]
-    )
+    # The qualitative target is always the complete stored ground-truth
+    # sequence. Autoregressive loss targets omit SOS, but decode_tokens already
+    # ignores SOS and the review renderer represents the complete batch target.
+    target_tensor = batch["targets"]
     targets = target_tensor.detach().cpu().numpy()
-    valid_mask = (
-        output.loss_valid_mask
-        if getattr(output, "loss_valid_mask", None) is not None
-        else batch.get("valid_mask")
-    )
-    lengths = _batch_lengths(batch, valid_mask)
+    lengths = _batch_lengths(batch, batch.get("valid_mask"))
     if not lengths:
         lengths = [targets.shape[1]] * targets.shape[0]
+    prediction_lengths = _batch_lengths(
+        {},
+        getattr(output, "loss_valid_mask", None),
+    )
+    predictions_are_shifted = getattr(output, "loss_targets", None) is not None
 
     source_files = batch.get("source_files") or [""] * targets.shape[0]
     source_indices = batch.get("source_indices")
@@ -108,12 +118,20 @@ def collect_reconstruction_examples(
         source_index = int(source_indices[row]) if source_indices is not None else row
         if token_logits is not None:
             assert codebook is not None
+            prediction_length = min(
+                (
+                    int(prediction_lengths[row])
+                    if prediction_lengths
+                    else max(0, length - 1 if predictions_are_shifted else length)
+                ),
+                predictions.shape[1],
+            )
             target = decode_tokens(
                 np.asarray(targets[row, :length], dtype=np.int64),
                 codebook,
             )
             prediction = decode_tokens(
-                np.asarray(predictions[row, :length], dtype=np.int64),
+                np.asarray(predictions[row, :prediction_length], dtype=np.int64),
                 codebook,
             )
         else:
@@ -131,6 +149,153 @@ def collect_reconstruction_examples(
             )
         )
     return examples
+
+
+def load_reconstruction_render_metadata(
+    manifest_path: str | Path,
+    *,
+    project_root: str | Path | None = None,
+    source_images_root: str | Path | None = None,
+) -> dict[str, ReconstructionRenderMetadata]:
+    """Load source paths and canvas transforms from a preprocessing JSONL manifest."""
+
+    manifest = Path(manifest_path)
+    root = Path(project_root) if project_root is not None else Path.cwd()
+    image_root = (
+        _resolve_path(Path(source_images_root), root)
+        if source_images_root is not None
+        else None
+    )
+    metadata: dict[str, ReconstructionRenderMetadata] = {}
+
+    with manifest.open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"Invalid JSON in preprocessing manifest {manifest}:{line_number}"
+                ) from exc
+            if record.get("status") not in {None, "accepted"}:
+                continue
+            transform_payload = record.get("transform")
+            if not isinstance(transform_payload, Mapping):
+                continue
+            try:
+                transform = Stroke5Transform(**dict(transform_payload))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Invalid transform in preprocessing manifest {manifest}:{line_number}"
+                ) from exc
+
+            source_image_path = _resolve_source_image_path(
+                record,
+                manifest=manifest,
+                project_root=root,
+                source_images_root=image_root,
+            )
+            render_metadata = ReconstructionRenderMetadata(
+                source_image_path=(
+                    str(source_image_path) if source_image_path is not None else None
+                ),
+                canvas_transform=transform,
+            )
+            for sample_key in _record_sample_keys(record):
+                existing = metadata.get(sample_key)
+                if existing is not None and existing != render_metadata:
+                    raise ValueError(
+                        "Conflicting reconstruction metadata for "
+                        f"sample {sample_key!r} in {manifest}"
+                    )
+                metadata[sample_key] = render_metadata
+    return metadata
+
+
+def attach_reconstruction_render_metadata(
+    examples: list[ReconstructionExample],
+    metadata: Mapping[str, ReconstructionRenderMetadata],
+) -> list[ReconstructionExample]:
+    """Attach manifest context to examples with matching sample identifiers."""
+
+    enriched: list[ReconstructionExample] = []
+    for example in examples:
+        sample_key = _normalize_sample_key(
+            example.sample_id
+            if example.sample_id is not None
+            else str(example.source_index)
+        )
+        render_metadata = metadata.get(sample_key)
+        if render_metadata is None:
+            enriched.append(example)
+            continue
+        enriched.append(
+            replace(
+                example,
+                source_image_path=render_metadata.source_image_path,
+                canvas_transform=render_metadata.canvas_transform,
+            )
+        )
+    return enriched
+
+
+def _record_sample_keys(record: Mapping[str, Any]) -> set[str]:
+    values = [
+        record.get("sample_id"),
+        record.get("source_relative_path"),
+        record.get("source_path"),
+    ]
+    return {
+        key
+        for value in values
+        if value is not None and (key := _normalize_sample_key(str(value)))
+    }
+
+
+def _normalize_sample_key(value: str) -> str:
+    key = value.replace("\\", "/")
+    while key.startswith("./"):
+        key = key[2:]
+    suffix = Path(key).suffix.lower()
+    if suffix in {".png", ".jpg", ".jpeg", ".npz"}:
+        key = key[: -len(suffix)]
+    return key
+
+
+def _resolve_source_image_path(
+    record: Mapping[str, Any],
+    *,
+    manifest: Path,
+    project_root: Path,
+    source_images_root: Path | None,
+) -> Path | None:
+    relative = record.get("source_relative_path")
+    if source_images_root is not None:
+        if relative:
+            return source_images_root / Path(str(relative))
+        sample_id = record.get("sample_id")
+        if sample_id:
+            return source_images_root / f"{sample_id}.png"
+
+    source = record.get("source_path")
+    if source is None:
+        return None
+    path = Path(str(source))
+    if path.is_absolute():
+        return path
+
+    project_candidate = project_root / path
+    if project_candidate.exists():
+        return project_candidate
+    manifest_candidate = manifest.parent / path
+    if manifest_candidate.exists():
+        return manifest_candidate
+    return project_candidate
+
+
+def _resolve_path(path: Path, project_root: Path) -> Path:
+    return path if path.is_absolute() else project_root / path
 
 
 def collect_generated_reconstruction_examples(

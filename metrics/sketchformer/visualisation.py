@@ -12,9 +12,17 @@ from metrics.sketchformer.reconstruction import ReconstructionExample
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
 
 import matplotlib
+from pipeline.stroke5 import (
+    Stroke5Transform,
+    stroke5_to_canvas_strokes,
+)
+from pipeline.vectorization import rasterize_strokes, read_grayscale_image
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
+_FALLBACK_CANVAS_SHAPE = (512, 512)
+_FALLBACK_MARGIN = 16
 
 
 def _stroke_array_and_pen_lift(strokes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -43,33 +51,141 @@ def stroke3_to_points(stroke3: np.ndarray) -> np.ndarray:
 
 
 def _plot_stroke3(ax: plt.Axes, stroke3: np.ndarray, title: str) -> None:
-    deltas, pen_lift = _stroke_array_and_pen_lift(stroke3)
-    points = np.cumsum(deltas, axis=0)
+    """Retained normalized plot helper; singleton pen-up moves stay invisible."""
 
-    if len(points) == 0:
-        ax.text(0.5, 0.5, "empty", ha="center", va="center")
+    stroke5 = _as_stroke5(stroke3)
+    transform = _fallback_transform(stroke5)
+    image = rasterize_decoded_strokes(
+        stroke5,
+        transform,
+        _FALLBACK_CANVAS_SHAPE,
+    )
+    _plot_raster(ax, image, title)
+
+
+def rasterize_decoded_strokes(
+    strokes: np.ndarray,
+    transform: Stroke5Transform,
+    image_shape: tuple[int, int],
+) -> np.ndarray:
+    """Render decoded strokes with the same rasterizer as preprocessing review."""
+
+    stroke5 = _as_stroke5(strokes)
+    canvas_strokes = stroke5_to_canvas_strokes(stroke5, transform)
+    return np.where(
+        rasterize_strokes(canvas_strokes, image_shape),
+        0,
+        255,
+    ).astype(np.uint8)
+
+
+def _as_stroke5(strokes: np.ndarray) -> np.ndarray:
+    array = np.asarray(strokes, dtype=np.float32)
+    if array.ndim != 2 or array.shape[1] not in {3, 5}:
+        raise ValueError(
+            "Expected stroke array with shape (N, 3) or (N, 5), "
+            f"got {array.shape}"
+        )
+    if array.shape[1] == 5:
+        return array
+
+    pen_lift = array[:, 2] >= 0.5
+    rows = np.zeros((len(array) + 1, 5), dtype=np.float32)
+    rows[:-1, :2] = array[:, :2]
+    rows[:-1, 2] = (~pen_lift).astype(np.float32)
+    rows[:-1, 3] = pen_lift.astype(np.float32)
+    rows[-1, 4] = 1.0
+    return rows
+
+
+def _visible_lines(stroke5: np.ndarray) -> list[np.ndarray]:
+    points = np.cumsum(stroke5[:, :2], axis=0)
+    lines: list[np.ndarray] = []
+    start = 0
+    for index, row in enumerate(stroke5):
+        if row[4] >= 0.5:
+            if index - start >= 2:
+                lines.append(points[start:index])
+            break
+        if row[3] >= 0.5:
+            if index + 1 - start >= 2:
+                lines.append(points[start : index + 1])
+            start = index + 1
     else:
-        start = 0
-        for index, lifted in enumerate(pen_lift):
-            if lifted:
-                _plot_segment(ax, points[start : index + 1])
-                start = index + 1
-        _plot_segment(ax, points[start:])
+        if len(points) - start >= 2:
+            lines.append(points[start:])
+    return lines
 
-        ax.scatter(points[0, 0], points[0, 1], s=10, color="#2f80ed", zorder=3)
-        ax.scatter(points[-1, 0], points[-1, 1], s=10, color="#eb5757", zorder=3)
 
+def _fallback_transform(stroke5: np.ndarray) -> Stroke5Transform:
+    lines = _visible_lines(stroke5)
+    if lines:
+        visible_points = np.concatenate(lines, axis=0)
+    else:
+        rows = stroke5[stroke5[:, 4] < 0.5]
+        visible_points = (
+            np.cumsum(rows[:, :2], axis=0)
+            if len(rows)
+            else np.zeros((1, 2), dtype=np.float32)
+        )
+
+    minimum = visible_points.min(axis=0)
+    maximum = visible_points.max(axis=0)
+    height, width = _FALLBACK_CANVAS_SHAPE
+    drawable_width = max(1, width - 2 * _FALLBACK_MARGIN)
+    drawable_height = max(1, height - 2 * _FALLBACK_MARGIN)
+    extent = maximum - minimum
+    scale = min(
+        drawable_width / max(float(extent[0]), 1e-6),
+        drawable_height / max(float(extent[1]), 1e-6),
+    )
+    if not np.isfinite(scale) or scale <= 0:
+        scale = 1.0
+
+    start_x = float(_FALLBACK_MARGIN - minimum[0] * scale)
+    start_y = float(_FALLBACK_MARGIN - minimum[1] * scale)
+    return Stroke5Transform(
+        canvas_height=height,
+        canvas_width=width,
+        start_x=start_x,
+        start_y=start_y,
+        bbox_x=float(minimum[0]),
+        bbox_y=float(minimum[1]),
+        bbox_width=float(extent[0]),
+        bbox_height=float(extent[1]),
+        scale=float(scale),
+        normalization_extent=1.0,
+    )
+
+
+def _load_source_image(example: ReconstructionExample) -> np.ndarray | None:
+    if not example.source_image_path:
+        return None
+    path = Path(example.source_image_path)
+    if not path.is_file():
+        return None
+    return read_grayscale_image(path)
+
+
+def _render_context(
+    example: ReconstructionExample,
+) -> tuple[np.ndarray | None, Stroke5Transform, tuple[int, int], bool]:
+    source = _load_source_image(example)
+    if example.canvas_transform is not None:
+        transform = example.canvas_transform
+        image_shape = (transform.canvas_height, transform.canvas_width)
+        return source, transform, image_shape, True
+
+    target = _as_stroke5(example.target)
+    transform = _fallback_transform(target)
+    return source, transform, _FALLBACK_CANVAS_SHAPE, False
+
+
+def _plot_raster(ax: plt.Axes, image: np.ndarray, title: str) -> None:
+    ax.imshow(image, cmap="gray", vmin=0, vmax=255, interpolation="nearest")
     ax.set_title(title, fontsize=9)
-    ax.set_aspect("equal", adjustable="box")
-    ax.invert_yaxis()
+    ax.set_aspect("equal")
     ax.axis("off")
-
-
-def _plot_segment(ax: plt.Axes, points: np.ndarray) -> None:
-    if len(points) == 1:
-        ax.scatter(points[0, 0], points[0, 1], s=4, color="#333333", alpha=0.7)
-    elif len(points) > 1:
-        ax.plot(points[:, 0], points[:, 1], linewidth=0.8, color="#222222", alpha=0.85)
 
 
 def save_reconstruction_pair(
@@ -78,16 +194,35 @@ def save_reconstruction_pair(
     *,
     title: str | None = None,
 ) -> Path:
-    """Save target and predicted sketches side by side."""
+    """Save source, decoded target, and prediction on one shared canvas."""
 
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    fig, axes = plt.subplots(1, 2, figsize=(8, 4), dpi=150)
+    source, transform, image_shape, uses_source_transform = _render_context(example)
+    target = rasterize_decoded_strokes(example.target, transform, image_shape)
+    prediction = rasterize_decoded_strokes(
+        example.prediction,
+        transform,
+        image_shape,
+    )
+
+    panel_count = 3 if source is not None else 2
+    fig, axes = plt.subplots(1, panel_count, figsize=(4 * panel_count, 4), dpi=150)
+    axes_array = np.atleast_1d(axes)
     if title:
         fig.suptitle(title, fontsize=10)
-    _plot_stroke3(axes[0], example.target, "target")
-    _plot_stroke3(axes[1], example.prediction, "prediction")
+    panel = 0
+    if source is not None:
+        _plot_raster(axes_array[panel], source, "original source")
+        panel += 1
+    target_title = (
+        "decoded target"
+        if uses_source_transform
+        else "decoded target (normalized canvas)"
+    )
+    _plot_raster(axes_array[panel], target, target_title)
+    _plot_raster(axes_array[panel + 1], prediction, "model prediction")
     fig.tight_layout()
     fig.savefig(path, bbox_inches="tight", facecolor="white")
     plt.close(fig)
