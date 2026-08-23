@@ -34,4 +34,10 @@ Run the deterministic periodic long-sequence eval:
 python -B evals/long_sequence_eval.py
 ```
 
+Run the serial/parallel preprocessing equivalence eval:
+
+```bash
+python -B evals/parallel_preprocessing_eval.py
+```
+
 The `-B` flag avoids writing `__pycache__` files into the repository.

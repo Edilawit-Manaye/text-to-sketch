@@ -142,19 +142,20 @@ class SketchformerModel(nn.Module):
             loss_targets = targets[:, 1:]
             loss_valid_mask = loss_targets != self.config.token_dictionary.pad_token_id
 
+        autoregressive_token_decode = (
+            self._uses_token_input and self.config.decoder_autoregressive
+        )
         decoded = self.decode(
             embedding,
             decoder_targets,
             memory_length=strokes.shape[1],
             self_attention_mask=(
-                decoder_valid_mask[:, None, None, :].contiguous()
-                if self._uses_token_input and self.config.decoder_autoregressive
+                self._token_decoder_attention_mask(decoder_valid_mask)
+                if autoregressive_token_decode
                 else attention_mask
             ),
             valid_mask=valid_mask,
-            self_attention_is_causal=(
-                self._uses_token_input and self.config.decoder_autoregressive
-            ),
+            self_attention_is_causal=False,
         )
 
         reconstruction = (
@@ -343,9 +344,21 @@ class SketchformerModel(nn.Module):
 
     @staticmethod
     def _token_decoder_attention_mask(valid_mask: torch.Tensor) -> torch.Tensor:
+        """Combine causal and key-padding visibility into one SDPA mask."""
+
         if valid_mask.dtype != torch.bool:
             valid_mask = valid_mask.to(dtype=torch.bool)
-        return valid_mask[:, None, None, :].contiguous()
+        if valid_mask.ndim != 2:
+            raise ValueError("valid_mask must have shape (batch, sequence)")
+
+        sequence_length = valid_mask.shape[1]
+        causal_visibility = torch.ones(
+            (sequence_length, sequence_length),
+            dtype=torch.bool,
+            device=valid_mask.device,
+        ).tril()
+        padding_visibility = valid_mask[:, None, None, :]
+        return (padding_visibility & causal_visibility).contiguous()
 
     @staticmethod
     def _cross_attention_mask(

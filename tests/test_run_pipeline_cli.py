@@ -9,6 +9,9 @@ from pipeline import run_pipeline as run_pipeline_cli
 
 
 class RunPipelineCliTest(unittest.TestCase):
+    def test_num_workers_defaults_to_serial(self) -> None:
+        self.assertEqual(run_pipeline_cli.parse_args([]).num_workers, 1)
+
     def test_cli_args_bypass_prompts_and_pass_pipeline_options(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -40,6 +43,8 @@ class RunPipelineCliTest(unittest.TestCase):
                         "1",
                         "--codebook-k",
                         "1000",
+                        "--num-workers",
+                        "8",
                         "--seed",
                         "42",
                     ]
@@ -64,7 +69,28 @@ class RunPipelineCliTest(unittest.TestCase):
                 manifest_path=None,
                 fail_on_overlength=False,
                 extractor_name=None,
+                num_workers=8,
             )
+
+    def test_cli_rejects_non_positive_worker_count(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sketches_dir = Path(tmpdir) / "sketches"
+            sketches_dir.mkdir()
+            (sketches_dir / "sketch.png").write_bytes(b"")
+
+            with self.assertRaisesRegex(SystemExit, "1"):
+                run_pipeline_cli.main(
+                    [
+                        "--sketches-dir",
+                        str(sketches_dir),
+                        "--n-sketches",
+                        "1",
+                        "--ordering",
+                        "continuity",
+                        "--num-workers",
+                        "0",
+                    ]
+                )
 
 
 if __name__ == "__main__":

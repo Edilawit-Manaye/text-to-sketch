@@ -127,6 +127,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Exit unsuccessfully after writing the manifest if any sketch is overlength.",
     )
     parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=1,
+        help=(
+            "Number of centerline sketches to process concurrently. "
+            "Use 1 for the existing serial behavior (default: 1)."
+        ),
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=42,
@@ -198,9 +207,16 @@ def main(argv: list[str] | None = None) -> None:
             sys.exit(1)
         n = min(args.n_sketches, len(available))
 
+    if args.num_workers < 1:
+        print("\n[error] --num-workers must be at least 1.")
+        sys.exit(1)
+
     ordering = args.ordering or _prompt_ordering()
 
-    print(f"\n  Will process {n} sketches with '{ordering}' ordering.")
+    print(
+        f"\n  Will process {n} sketches with '{ordering}' ordering "
+        f"using {args.num_workers} worker(s)."
+    )
 
     run_pipeline(
         sketches_dir=sketches_dir,
@@ -219,6 +235,7 @@ def main(argv: list[str] | None = None) -> None:
         manifest_path=args.manifest,
         fail_on_overlength=args.fail_on_overlength,
         extractor_name=args.extractor_name,
+        num_workers=args.num_workers,
     )
 
     print(f"\n{'═' * 58}")

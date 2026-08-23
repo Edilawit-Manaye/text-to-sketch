@@ -240,6 +240,7 @@ tts-run-pipeline \
   --max-geometry-error 2.0 \
   --max-token-length 4096 \
   --manifest data/processed/preprocessing_manifest.jsonl \
+  --num-workers 8 \
   --fail-on-overlength
 
 tts-prepare-sketchformer-tokens \
@@ -250,6 +251,48 @@ tts-prepare-sketchformer-tokens \
   --overlength-policy error \
   --n-chunks 10
 ```
+
+Centerline preprocessing defaults to one worker for compatibility. On a
+12-core/24-thread server, start with `--num-workers 8`; each worker loads the
+released codebook and builds its quantizer once, while the parent process alone
+writes the manifest. Worker outputs use atomic sibling-file replacement, so an
+interrupted archive write cannot replace an existing valid `.npz`. Use fresh
+stroke, token, and manifest output directories for each run because the pipeline
+does not remove artifacts left by an older run.
+
+Prevent OpenCV and numerical libraries from creating nested thread pools before
+starting a multi-worker run:
+
+```bash
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export NUMEXPR_NUM_THREADS=1
+export NUMBA_NUM_THREADS=1
+```
+
+For the 44,000-sketch server run with RDP fixed at exactly 2 pixels, keep
+`--rdp-epsilon` and `--max-geometry-error` equal and use a fresh run directory:
+
+```bash
+tts-run-pipeline \
+  --sketches-dir data/processed/sketches-filtered \
+  --stroke5-dir data/processed/rdp2/stroke5 \
+  --token-dict-dir data/processed/sketch_token \
+  --extractor-name lineart-anime \
+  --n-sketches 44000 \
+  --vectorizer centerline \
+  --threshold-profile hysteresis \
+  --ordering continuity \
+  --rdp-epsilon 2.0 \
+  --max-geometry-error 2.0 \
+  --max-token-length 4096 \
+  --manifest data/processed/rdp2/preprocessing_manifest.jsonl \
+  --num-workers 8 \
+  --seed 42
+```
+
+This writes token archives under `data/processed/rdp2/tokens`.
 
 Convert a separate long-sequence checkpoint. TensorFlow is needed only for this command:
 

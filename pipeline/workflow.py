@@ -4,8 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import multiprocessing
+import os
 import random
-from dataclasses import asdict
+import stat
+import tempfile
+import time
+from concurrent.futures import ProcessPoolExecutor
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +56,39 @@ _ORDER_FN_MAP = {
 }
 
 
+@dataclass(frozen=True)
+class _CenterlineWorkerConfig:
+    """Pickle-safe configuration shared by centerline worker processes."""
+
+    sketches_dir: str
+    stroke5_dir: str
+    token_dir: str
+    codebook_path: str
+    codebook_sha256: str
+    codebook_size: int
+    ordering: str
+    rdp_epsilon: float
+    threshold_profile: str
+    max_token_length: int
+    max_geometry_error: float
+    extractor_name: str
+    limit_library_threads: bool
+
+
+@dataclass
+class _CenterlineWorkerState:
+    """Large process-local objects that must be initialized only once."""
+
+    config: _CenterlineWorkerConfig
+    codebook: np.ndarray
+    quantizer: ErrorFeedbackQuantizer
+    order_fn: Any
+    thread_limiter: Any = None
+
+
+_CENTERLINE_WORKER_STATE: _CenterlineWorkerState | None = None
+
+
 def run_pipeline(
     sketches_dir: Path,
     stroke5_dir: Path,
@@ -68,6 +107,7 @@ def run_pipeline(
     manifest_path: Path | None = None,
     fail_on_overlength: bool = False,
     extractor_name: str | None = None,
+    num_workers: int = 1,
 ) -> None:
     """Run the default centerline preprocessing path or legacy contour path."""
 
@@ -81,6 +121,12 @@ def run_pipeline(
         raise ValueError(f"Unknown ordering {ordering!r}. Expected one of: {valid}.")
     if vectorizer not in {"contour", "centerline"}:
         raise ValueError("vectorizer must be one of: contour, centerline")
+    if int(n_sketches) < 1:
+        raise ValueError("n_sketches must be at least 1")
+    if int(num_workers) < 1:
+        raise ValueError("num_workers must be at least 1")
+    if vectorizer != "centerline" and int(num_workers) != 1:
+        raise ValueError("num_workers greater than 1 is only supported for centerline")
 
     count = min(int(n_sketches), len(all_sketches))
     samples = random.Random(seed).sample(all_sketches, count)
@@ -90,7 +136,6 @@ def run_pipeline(
             sketches_dir=Path(sketches_dir),
             stroke5_dir=Path(stroke5_dir),
             token_dict_dir=Path(token_dict_dir or sketch_token_dir),
-            order_fn=_ORDER_FN_MAP[ordering],
             ordering=ordering,
             rdp_epsilon=float(rdp_epsilon),
             threshold_profile=threshold_profile,
@@ -99,6 +144,7 @@ def run_pipeline(
             manifest_path=Path(manifest_path) if manifest_path else None,
             fail_on_overlength=fail_on_overlength,
             extractor_name=extractor_name or Path(sketches_dir).name,
+            num_workers=int(num_workers),
         )
         return
 
@@ -119,7 +165,6 @@ def _run_centerline_pipeline(
     sketches_dir: Path,
     stroke5_dir: Path,
     token_dict_dir: Path,
-    order_fn,
     ordering: str,
     rdp_epsilon: float,
     threshold_profile: str,
@@ -128,6 +173,7 @@ def _run_centerline_pipeline(
     manifest_path: Path | None,
     fail_on_overlength: bool,
     extractor_name: str,
+    num_workers: int,
 ) -> None:
     if max_token_length < 4:
         raise ValueError("max_token_length must be at least 4")
@@ -143,80 +189,101 @@ def _run_centerline_pipeline(
     codebook = np.asarray(np.load(codebook_path), dtype=np.float32)
     if codebook.ndim != 2 or codebook.shape[1] != 2:
         raise ValueError(f"Expected codebook shape (K, 2), got {codebook.shape}")
-    quantizer = ErrorFeedbackQuantizer(codebook)
     codebook_sha256 = hashlib.sha256(codebook_path.read_bytes()).hexdigest()
 
     token_dir = stroke5_dir.parent / "tokens"
     resolved_manifest = manifest_path or stroke5_dir.parent / "preprocessing_manifest.jsonl"
     records: list[dict[str, Any]] = []
     accepted = overlength = failed = 0
+    effective_workers = min(
+        int(num_workers),
+        len(samples),
+        _available_cpu_count(),
+    )
+    if effective_workers < int(num_workers):
+        print(
+            f"[pipeline] requested_workers={num_workers} capped_workers="
+            f"{effective_workers}"
+        )
+    worker_config = _CenterlineWorkerConfig(
+        sketches_dir=str(sketches_dir),
+        stroke5_dir=str(stroke5_dir),
+        token_dir=str(token_dir),
+        codebook_path=str(codebook_path),
+        codebook_sha256=codebook_sha256,
+        codebook_size=len(codebook),
+        ordering=ordering,
+        rdp_epsilon=rdp_epsilon,
+        threshold_profile=threshold_profile,
+        max_token_length=max_token_length,
+        max_geometry_error=max_geometry_error,
+        extractor_name=extractor_name,
+        limit_library_threads=effective_workers > 1,
+    )
+    del codebook
 
     print(
         f"[pipeline] sketches={len(samples)} vectorizer=centerline "
-        f"ordering={ordering} max_tokens={max_token_length}"
+        f"ordering={ordering} max_tokens={max_token_length} "
+        f"workers={effective_workers}"
     )
     print(f"[pipeline] token_dictionary={codebook_path}")
 
-    for image_path in tqdm(samples, desc="Centerline", unit="sketch"):
-        relative = image_path.relative_to(sketches_dir)
-        base_record: dict[str, Any] = {
-            "schema_version": 2,
-            "sample_id": relative.with_suffix("").as_posix(),
-            "source_path": str(image_path),
-            "source_relative_path": relative.as_posix(),
-            "extractor": extractor_name,
-            "vectorizer": "centerline",
-            "threshold_profile": threshold_profile,
-            "ordering": ordering,
-            "max_token_length": max_token_length,
-            "token_dictionary_path": str(codebook_path),
-            "token_dictionary_size": len(codebook),
-            "token_dictionary_sha256": codebook_sha256,
-            "quantizer": "error_feedback_pair_search",
-        }
-        try:
-            result = fit_centerline_sequence(
-                image_path=image_path,
-                codebook=codebook,
-                quantizer=quantizer,
-                order_fn=order_fn,
-                initial_epsilon=rdp_epsilon,
-                max_epsilon=max_geometry_error,
-                threshold_profile=threshold_profile,
-                max_token_length=max_token_length,
+    started_at = time.perf_counter()
+    pool: ProcessPoolExecutor | None = None
+    try:
+        if effective_workers == 1:
+            _initialize_centerline_worker(worker_config)
+            record_iterator = map(_process_centerline_sample, samples)
+        else:
+            pool = ProcessPoolExecutor(
+                max_workers=effective_workers,
+                mp_context=multiprocessing.get_context("spawn"),
+                initializer=_initialize_centerline_worker,
+                initargs=(worker_config,),
             )
-            base_record.update(result["record"])
-            if not result["accepted"]:
+            record_iterator = pool.map(
+                _process_centerline_sample,
+                samples,
+                chunksize=1,
+            )
+        for record in tqdm(
+            record_iterator,
+            total=len(samples),
+            desc="Centerline",
+            unit="sketch",
+        ):
+            records.append(record)
+            status = record.get("status")
+            if status == "accepted":
+                accepted += 1
+            elif status == "rejected":
                 overlength += 1
-                records.append(base_record)
-                continue
-
-            stroke5 = result["stroke5"]
-            tokens = result["tokens"]
-            output_relative = relative.with_suffix(".npz")
-            stroke_path = stroke5_dir / output_relative
-            token_path = token_dir / output_relative
-            save_stroke5(stroke5, stroke_path)
-            save_token_sequence(tokens, token_path)
-            base_record.update(
-                {
-                    "status": "accepted",
-                    "stroke5_path": str(stroke_path),
-                    "tokens_path": str(token_path),
-                }
-            )
-            records.append(base_record)
-            accepted += 1
-        except Exception as exc:
-            failed += 1
-            base_record.update({"status": "error", "rejection_reason": str(exc)})
-            records.append(base_record)
-            tqdm.write(f"[pipeline] error {image_path.name}: {exc}")
+            else:
+                failed += 1
+                tqdm.write(
+                    f"[pipeline] error {Path(str(record['source_path'])).name}: "
+                    f"{record.get('rejection_reason', 'unknown error')}"
+                )
+    except BaseException:
+        if pool is not None:
+            pool.shutdown(wait=True, cancel_futures=True)
+            pool = None
+        raise
+    finally:
+        if pool is not None:
+            pool.shutdown()
 
     _write_manifest(resolved_manifest, records)
+    elapsed_seconds = max(time.perf_counter() - started_at, 1.0e-9)
     print(
         f"[pipeline] accepted={accepted} overlength={overlength} errors={failed} "
         f"manifest={resolved_manifest}"
+    )
+    print(
+        f"[pipeline] elapsed_seconds={elapsed_seconds:.2f} "
+        f"throughput={len(records) / elapsed_seconds:.2f}_sketches_per_second "
+        f"workers={effective_workers}"
     )
     if fail_on_overlength and overlength:
         raise RuntimeError(
@@ -225,6 +292,100 @@ def _run_centerline_pipeline(
         )
     if accepted == 0:
         raise RuntimeError(f"No sketches were accepted; see {resolved_manifest}")
+
+
+def _initialize_centerline_worker(config: _CenterlineWorkerConfig) -> None:
+    """Build the expensive codebook indexes once in each worker process."""
+
+    global _CENTERLINE_WORKER_STATE
+
+    thread_limiter = None
+    if config.limit_library_threads:
+        import cv2
+
+        cv2.setNumThreads(1)
+        try:
+            from threadpoolctl import threadpool_limits
+
+            thread_limiter = threadpool_limits(limits=1)
+        except ImportError:
+            thread_limiter = None
+
+    codebook_path = Path(config.codebook_path)
+    worker_sha256 = hashlib.sha256(codebook_path.read_bytes()).hexdigest()
+    if worker_sha256 != config.codebook_sha256:
+        raise ValueError("Token dictionary changed while workers were starting")
+    codebook = np.asarray(np.load(codebook_path), dtype=np.float32)
+    if codebook.shape != (config.codebook_size, 2):
+        raise ValueError(
+            "Worker codebook shape changed after validation: "
+            f"expected {(config.codebook_size, 2)}, got {codebook.shape}"
+        )
+    _CENTERLINE_WORKER_STATE = _CenterlineWorkerState(
+        config=config,
+        codebook=codebook,
+        quantizer=ErrorFeedbackQuantizer(codebook),
+        order_fn=_ORDER_FN_MAP[config.ordering],
+        thread_limiter=thread_limiter,
+    )
+
+
+def _process_centerline_sample(image_path: Path) -> dict[str, Any]:
+    """Process and persist one sketch using process-local worker state."""
+
+    state = _CENTERLINE_WORKER_STATE
+    if state is None:
+        raise RuntimeError("Centerline worker was not initialized")
+
+    config = state.config
+    image_path = Path(image_path)
+    sketches_dir = Path(config.sketches_dir)
+    relative = image_path.relative_to(sketches_dir)
+    base_record: dict[str, Any] = {
+        "schema_version": 2,
+        "sample_id": relative.with_suffix("").as_posix(),
+        "source_path": str(image_path),
+        "source_relative_path": relative.as_posix(),
+        "extractor": config.extractor_name,
+        "vectorizer": "centerline",
+        "threshold_profile": config.threshold_profile,
+        "ordering": config.ordering,
+        "max_token_length": config.max_token_length,
+        "token_dictionary_path": config.codebook_path,
+        "token_dictionary_size": config.codebook_size,
+        "token_dictionary_sha256": config.codebook_sha256,
+        "quantizer": "error_feedback_pair_search",
+    }
+    try:
+        result = fit_centerline_sequence(
+            image_path=image_path,
+            codebook=state.codebook,
+            quantizer=state.quantizer,
+            order_fn=state.order_fn,
+            initial_epsilon=config.rdp_epsilon,
+            max_epsilon=config.max_geometry_error,
+            threshold_profile=config.threshold_profile,
+            max_token_length=config.max_token_length,
+        )
+        base_record.update(result["record"])
+        if not result["accepted"]:
+            return base_record
+
+        output_relative = relative.with_suffix(".npz")
+        stroke_path = Path(config.stroke5_dir) / output_relative
+        token_path = Path(config.token_dir) / output_relative
+        save_stroke5(result["stroke5"], stroke_path)
+        save_token_sequence(result["tokens"], token_path)
+        base_record.update(
+            {
+                "status": "accepted",
+                "stroke5_path": str(stroke_path),
+                "tokens_path": str(token_path),
+            }
+        )
+    except Exception as exc:
+        base_record.update({"status": "error", "rejection_reason": str(exc)})
+    return base_record
 
 
 def fit_centerline_sequence(
@@ -372,11 +533,46 @@ def _epsilon_schedule(initial: float, maximum: float) -> list[float]:
     return values
 
 
+def _available_cpu_count() -> int:
+    """Return CPUs available to this process, respecting Linux affinity."""
+
+    try:
+        return max(1, len(os.sched_getaffinity(0)))
+    except (AttributeError, OSError):
+        return max(1, os.cpu_count() or 1)
+
+
 def _write_manifest(path: Path, records: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        for record in records:
-            handle.write(json.dumps(record, sort_keys=True) + "\n")
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        text=True,
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, _replacement_mode(path))
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            descriptor = -1
+            for record in records:
+                handle.write(json.dumps(record, sort_keys=True) + "\n")
+        os.replace(temporary_path, path)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        temporary_path.unlink(missing_ok=True)
+
+
+def _replacement_mode(path: Path) -> int:
+    """Match an existing target or the process's normal new-file mode."""
+
+    try:
+        return stat.S_IMODE(path.stat().st_mode)
+    except FileNotFoundError:
+        current_umask = os.umask(0)
+        os.umask(current_umask)
+        return 0o666 & ~current_umask
 
 
 def _run_legacy_pipeline(
