@@ -362,6 +362,7 @@ def _process_centerline_sample(image_path: Path) -> dict[str, Any]:
             codebook=state.codebook,
             quantizer=state.quantizer,
             order_fn=state.order_fn,
+            ordering=config.ordering,
             initial_epsilon=config.rdp_epsilon,
             max_epsilon=config.max_geometry_error,
             threshold_profile=config.threshold_profile,
@@ -394,6 +395,7 @@ def fit_centerline_sequence(
     codebook: np.ndarray,
     quantizer: ErrorFeedbackQuantizer,
     order_fn,
+    ordering: str = "continuity",
     initial_epsilon: float,
     max_epsilon: float,
     threshold_profile: str,
@@ -404,6 +406,7 @@ def fit_centerline_sequence(
     epsilon_values = _epsilon_schedule(initial_epsilon, max_epsilon)
     best_feasible: dict[str, Any] | None = None
     best_overlength: dict[str, Any] | None = None
+    use_structured = ordering == "continuity"
 
     for epsilon in epsilon_values:
         strokes, stats = vectorize_image_with_stats(
@@ -411,6 +414,7 @@ def fit_centerline_sequence(
             epsilon=epsilon,
             method="centerline",
             threshold_profile=threshold_profile,
+            structured=use_structured,
         )
         if not strokes:
             raise ValueError("centerline vectorization produced no strokes")
