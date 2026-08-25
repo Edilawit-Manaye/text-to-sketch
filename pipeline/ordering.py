@@ -9,11 +9,9 @@ Three ordering strategies are provided:
     order_greedy_nearest_neighbor(strokes) – minimise pen-travel greedily
     order_tsp(strokes)                   – global TSP approximation via NetworkX
     order_continuity_greedy(strokes)     – join centerline branches smoothly
-    order_continuity_topology(branches)  – topology-aware continuity ordering
 
 All functions accept and return ``list[list[tuple[int, int]]]`` — a list of
 strokes, where each stroke is an ordered list of (x, y) pixel coordinates.
-``order_continuity_topology`` accepts ``list[CenterlineBranch]``.
 """
 
 from __future__ import annotations
@@ -48,7 +46,7 @@ def _turn_cost(previous: tuple, junction: tuple, following: tuple) -> float:
 
 
 def order_continuity_greedy(
-    strokes: list[list[tuple[int, int]]],
+    strokes: list[list[tuple[int, int]]] | list[CenterlineBranch],
     *,
     junction_tolerance: float = 2.0,
 ) -> list[list[tuple[int, int]]]:
@@ -59,6 +57,9 @@ def order_continuity_greedy(
     remaining strokes by nearest endpoint. T/Y branches remain separate once
     the main continuation has consumed the junction.
     """
+
+    if strokes and isinstance(strokes[0], CenterlineBranch):
+        return order_continuity_topology(strokes)
 
     remaining = [list(stroke) for stroke in strokes if len(stroke) >= 2]
     if not remaining:
