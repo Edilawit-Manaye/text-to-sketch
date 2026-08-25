@@ -22,6 +22,18 @@ Stroke = list[Point]
 
 
 @dataclass(frozen=True)
+class CenterlineBranch:
+    """A single skeleton branch with its graph topology metadata."""
+
+    branch_id: int
+    points: list[Point]
+    start_node_id: int
+    end_node_id: int
+    component_id: int
+    is_loop: bool
+
+
+@dataclass(frozen=True)
 class VectorizationStats:
     """Geometry and point-count summary for one vectorized sketch."""
 
