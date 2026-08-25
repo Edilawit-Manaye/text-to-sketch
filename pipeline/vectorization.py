@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, overload
 
 import cv2
 import numpy as np
@@ -166,28 +166,73 @@ def foreground_mask(
     return mask
 
 
-def simplify_strokes(strokes: list[Stroke], epsilon: float) -> list[Stroke]:
+def simplify_strokes(
+    strokes: list[Stroke],
+    epsilon: float,
+) -> list[Stroke]:
     """Simplify stroke paths with an absolute pixel-space RDP tolerance."""
 
     if epsilon < 0:
         raise ValueError("epsilon must be non-negative")
     simplified: list[Stroke] = []
     for stroke in strokes:
-        if len(stroke) < 2:
-            continue
-        closed = len(stroke) > 2 and _points_touch(stroke[0], stroke[-1])
-        if epsilon == 0:
-            points = list(stroke)
-        else:
-            contour = np.asarray(stroke, dtype=np.float32).reshape(-1, 1, 2)
-            approx = cv2.approxPolyDP(contour, float(epsilon), closed=closed)
-            points = [(int(round(point[0][0])), int(round(point[0][1]))) for point in approx]
-        points = _deduplicate_consecutive(points)
-        if closed and len(points) > 2 and points[0] != points[-1]:
-            points.append(points[0])
-        if len(points) > 1:
-            simplified.append(points)
+        simplified_points = _simplify_single(stroke, epsilon)
+        if simplified_points is not None:
+            simplified.append(simplified_points)
     return simplified
+
+
+def simplify_branches(
+    branches: list[CenterlineBranch],
+    epsilon: float,
+) -> list[CenterlineBranch]:
+    """Simplify branch points via RDP while preserving topology metadata."""
+
+    if epsilon < 0:
+        raise ValueError("epsilon must be non-negative")
+    simplified: list[CenterlineBranch] = []
+    for branch in branches:
+        simplified_points = _simplify_single(branch.points, epsilon)
+        if simplified_points is None:
+            continue
+        first_point = branch.points[0]
+        last_point = branch.points[-1]
+        simplified_points[0] = first_point
+        simplified_points[-1] = last_point
+        simplified.append(
+            CenterlineBranch(
+                branch_id=branch.branch_id,
+                points=simplified_points,
+                start_node_id=branch.start_node_id,
+                end_node_id=branch.end_node_id,
+                component_id=branch.component_id,
+                is_loop=branch.is_loop,
+            )
+        )
+    return simplified
+
+
+def _simplify_single(
+    stroke: list[Point],
+    epsilon: float,
+) -> list[Point] | None:
+    """RDP-simplify one coordinate list. Returns None if result is too short."""
+
+    if len(stroke) < 2:
+        return None
+    closed = len(stroke) > 2 and _points_touch(stroke[0], stroke[-1])
+    if epsilon == 0:
+        points = list(stroke)
+    else:
+        contour = np.asarray(stroke, dtype=np.float32).reshape(-1, 1, 2)
+        approx = cv2.approxPolyDP(contour, float(epsilon), closed=closed)
+        points = [(int(round(point[0][0])), int(round(point[0][1]))) for point in approx]
+    points = _deduplicate_consecutive(points)
+    if closed and len(points) > 2 and points[0] != points[-1]:
+        points.append(points[0])
+    if len(points) > 1:
+        return points
+    return None
 
 
 def rasterize_strokes(
