@@ -282,11 +282,12 @@ def _vectorize_centerline(
         min_object_size=min_object_size,
     )
     skeleton = skeletonize(mask)
-    raw = _skeleton_paths(skeleton)
-    strokes = simplify_strokes(raw, epsilon)
+    raw_branches = _skeleton_paths(skeleton)
+    raw_strokes = [branch.points for branch in raw_branches]
+    strokes = simplify_strokes(raw_strokes, epsilon)
     return strokes, VectorizationStats(
         epsilon=float(epsilon),
-        raw_stroke_count=len(raw),
+        raw_stroke_count=len(raw_strokes),
         raw_point_count=int(skeleton.sum()),
         simplified_stroke_count=len(strokes),
         simplified_point_count=sum(len(stroke) for stroke in strokes),
@@ -298,7 +299,7 @@ def _vectorize_centerline(
     )
 
 
-def _skeleton_paths(skeleton: np.ndarray) -> list[Stroke]:
+def _skeleton_paths(skeleton: np.ndarray) -> list[CenterlineBranch]:
     if not np.asarray(skeleton, dtype=bool).any():
         return []
     try:
@@ -308,8 +309,17 @@ def _skeleton_paths(skeleton: np.ndarray) -> list[Stroke]:
             "Centerline vectorization requires skan>=0.13.1; install project requirements"
         ) from exc
 
+    import networkx as nx
+
     graph = Skeleton(np.asarray(skeleton, dtype=np.uint8), keep_images=False)
-    paths: list[Stroke] = []
+
+    node_to_component: dict[int, int] = {}
+    nx_graph = nx.from_scipy_sparse_array(graph.graph)
+    for component_id, component_nodes in enumerate(nx.connected_components(nx_graph)):
+        for node in component_nodes:
+            node_to_component[node] = component_id
+
+    branches: list[CenterlineBranch] = []
     for index in range(graph.n_paths):
         coordinates = np.asarray(graph.path_coordinates(index))
         if len(coordinates) < 2:
@@ -319,10 +329,34 @@ def _skeleton_paths(skeleton: np.ndarray) -> list[Stroke]:
             for row, column in coordinates[:, :2]
         ]
         points = _deduplicate_consecutive(points)
-        if len(points) > 1:
-            paths.append(points)
-    paths.sort(key=lambda stroke: (min(y for _, y in stroke), min(x for x, _ in stroke), -len(stroke)))
-    return paths
+        if len(points) < 2:
+            continue
+
+        node_ids = graph.path(index)
+        start_node = int(node_ids[0])
+        end_node = int(node_ids[-1])
+        is_loop = start_node == end_node
+        component_id = node_to_component.get(start_node, 0)
+
+        branches.append(
+            CenterlineBranch(
+                branch_id=index,
+                points=points,
+                start_node_id=start_node,
+                end_node_id=end_node,
+                component_id=component_id,
+                is_loop=is_loop,
+            )
+        )
+
+    branches.sort(
+        key=lambda b: (
+            min(y for _, y in b.points),
+            min(x for x, _ in b.points),
+            -len(b.points),
+        )
+    )
+    return branches
 
 
 def _safe_otsu(values: np.ndarray) -> float:
