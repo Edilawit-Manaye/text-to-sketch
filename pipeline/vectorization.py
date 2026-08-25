@@ -96,7 +96,8 @@ def vectorize_image_with_stats(
     method: Literal["contour", "centerline"] = "contour",
     threshold_profile: str = "hysteresis",
     min_object_size: int = 4,
-) -> tuple[list[Stroke], VectorizationStats]:
+    structured: bool = False,
+) -> tuple[list[Stroke], VectorizationStats] | tuple[list[CenterlineBranch], VectorizationStats]:
     """Vectorize a sketch and report the geometry retained by simplification."""
 
     if epsilon < 0:
@@ -112,6 +113,7 @@ def vectorize_image_with_stats(
         epsilon,
         threshold_profile=threshold_profile,
         min_object_size=min_object_size,
+        structured=structured,
     )
 
 
@@ -320,7 +322,8 @@ def _vectorize_centerline(
     *,
     threshold_profile: str,
     min_object_size: int,
-) -> tuple[list[Stroke], VectorizationStats]:
+    structured: bool = False,
+) -> tuple[list[Stroke], VectorizationStats] | tuple[list[CenterlineBranch], VectorizationStats]:
     mask = foreground_mask(
         image,
         profile=threshold_profile,
@@ -328,11 +331,28 @@ def _vectorize_centerline(
     )
     skeleton = skeletonize(mask)
     raw_branches = _skeleton_paths(skeleton)
+    raw_count = len(raw_branches)
+
+    if structured:
+        branches = simplify_branches(raw_branches, epsilon)
+        return branches, VectorizationStats(
+            epsilon=float(epsilon),
+            raw_stroke_count=raw_count,
+            raw_point_count=int(skeleton.sum()),
+            simplified_stroke_count=len(branches),
+            simplified_point_count=sum(len(b.points) for b in branches),
+            method="centerline",
+            threshold_profile=threshold_profile,
+            foreground_point_count=int(mask.sum()),
+            image_height=int(image.shape[0]),
+            image_width=int(image.shape[1]),
+        )
+
     raw_strokes = [branch.points for branch in raw_branches]
     strokes = simplify_strokes(raw_strokes, epsilon)
     return strokes, VectorizationStats(
         epsilon=float(epsilon),
-        raw_stroke_count=len(raw_strokes),
+        raw_stroke_count=raw_count,
         raw_point_count=int(skeleton.sum()),
         simplified_stroke_count=len(strokes),
         simplified_point_count=sum(len(stroke) for stroke in strokes),
