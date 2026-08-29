@@ -21,6 +21,7 @@ from tqdm import tqdm
 from pipeline.kinematics import generate_kinematics
 from pipeline.ordering import (
     order_continuity_greedy,
+    order_continuity_topology,
     order_directional_bias,
     order_greedy_nearest_neighbor,
     order_tsp,
@@ -53,6 +54,7 @@ _ORDER_FN_MAP = {
     "directional": order_directional_bias,
     "greedy": order_greedy_nearest_neighbor,
     "tsp": order_tsp,
+    "continuity-topology": order_continuity_topology,
 }
 
 
@@ -406,7 +408,7 @@ def fit_centerline_sequence(
     epsilon_values = _epsilon_schedule(initial_epsilon, max_epsilon)
     best_feasible: dict[str, Any] | None = None
     best_overlength: dict[str, Any] | None = None
-    use_structured = ordering == "continuity"
+    use_structured = ordering == "continuity-topology"
 
     for epsilon in epsilon_values:
         strokes, stats = vectorize_image_with_stats(
