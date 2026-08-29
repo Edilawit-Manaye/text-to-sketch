@@ -30,6 +30,7 @@ _ORDERING_METHODS: dict[str, str] = {
     "2": "directional",
     "3": "greedy",
     "4": "tsp",
+    "5": "continuity-topology",
 }
 _DEFAULT_ORDERING = "1"
 
@@ -166,14 +167,15 @@ def _prompt_ordering() -> str:
     print("  2) Directional bias")
     print("  3) Greedy nearest-neighbor")
     print("  4) TSP approximation")
+    print("  5) Continuity topology")
     while True:
         try:
-            raw = input("Choose [1/2/3/4, default: 1]: ").strip() or _DEFAULT_ORDERING
+            raw = input("Choose [1/2/3/4/5, default: 1]: ").strip() or _DEFAULT_ORDERING
         except EOFError:
             raw = _DEFAULT_ORDERING
         if raw in _ORDERING_METHODS:
             return _ORDERING_METHODS[raw]
-        print("  Invalid choice; please enter 1, 2, 3, or 4.")
+        print("  Invalid choice; please enter 1, 2, 3, 4, or 5.")
 
 
 def main(argv: list[str] | None = None) -> None:
