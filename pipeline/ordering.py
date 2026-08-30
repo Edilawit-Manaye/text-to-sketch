@@ -17,9 +17,12 @@ strokes, where each stroke is an ordered list of (x, y) pixel coordinates.
 from __future__ import annotations
 
 import math
+from collections import defaultdict
 
 import networkx as nx
 import numpy as np
+
+from pipeline.vectorization import CenterlineBranch
 
 
 
@@ -43,7 +46,7 @@ def _turn_cost(previous: tuple, junction: tuple, following: tuple) -> float:
 
 
 def order_continuity_greedy(
-    strokes: list[list[tuple[int, int]]],
+    strokes: list[list[tuple[int, int]]] | list[CenterlineBranch],
     *,
     junction_tolerance: float = 2.0,
 ) -> list[list[tuple[int, int]]]:
@@ -54,6 +57,9 @@ def order_continuity_greedy(
     remaining strokes by nearest endpoint. T/Y branches remain separate once
     the main continuation has consumed the junction.
     """
+
+    if strokes and isinstance(strokes[0], CenterlineBranch):
+        return order_continuity_topology(strokes)
 
     remaining = [list(stroke) for stroke in strokes if len(stroke) >= 2]
     if not remaining:
@@ -111,6 +117,173 @@ def order_continuity_greedy(
                 remaining[0].reverse()
 
     return ordered
+
+
+# Strategy D – Topology-Aware Continuity
+
+
+def order_continuity_topology(
+    branches: list[CenterlineBranch],
+) -> list[list[tuple[int, int]]]:
+    """Order strokes using skeleton graph topology for true connectivity.
+
+    Branches are joined only when their endpoints share the same skeleton
+    graph-node ID.  At junctions, the smoothest continuation is chosen via
+    turn cost.  Disconnected components remain separate strokes; endpoint
+    distance is used only to order those separate strokes, never to join them.
+    Closed loops are preserved as complete strokes.
+    """
+
+    if not branches:
+        return []
+
+    node_to_branches: dict[int, list[CenterlineBranch]] = defaultdict(list)
+    for branch in branches:
+        node_to_branches[branch.start_node_id].append(branch)
+        node_to_branches[branch.end_node_id].append(branch)
+
+    used: set[int] = set()
+    strokes: list[list[tuple[int, int]]] = []
+
+    for branch in branches:
+        if branch.is_loop:
+            strokes.append(list(branch.points))
+            used.add(branch.branch_id)
+
+    for branch in branches:
+        if branch.branch_id in used:
+            continue
+        used.add(branch.branch_id)
+        chain = list(branch.points)
+        chain_start_node = branch.start_node_id
+        chain_end_node = branch.end_node_id
+
+        while True:
+            candidates = [
+                b for b in node_to_branches[chain_end_node]
+                if b.branch_id not in used
+            ]
+            if not candidates:
+                break
+            best = _pick_smooth_forward(chain, candidates, chain_end_node)
+            if best is None:
+                break
+            used.add(best.branch_id)
+            if best.start_node_id == chain_end_node:
+                chain.extend(best.points[1:])
+                chain_end_node = best.end_node_id
+            else:
+                chain.extend(best.points[:-1][::-1])
+                chain_end_node = best.start_node_id
+
+        while True:
+            candidates = [
+                b for b in node_to_branches[chain_start_node]
+                if b.branch_id not in used
+            ]
+            if not candidates:
+                break
+            best = _pick_smooth_backward(chain, candidates, chain_start_node)
+            if best is None:
+                break
+            used.add(best.branch_id)
+            if best.end_node_id == chain_start_node:
+                chain = best.points[:-1] + chain
+                chain_start_node = best.start_node_id
+            else:
+                chain = best.points[1:][::-1] + chain
+                chain_start_node = best.end_node_id
+
+        strokes.append(chain)
+
+    if len(strokes) > 1:
+        strokes = _order_strokes_by_distance(strokes)
+
+    return strokes
+
+
+def _pick_smooth_forward(
+    chain: list[tuple[int, int]],
+    candidates: list[CenterlineBranch],
+    shared_node: int,
+) -> CenterlineBranch | None:
+    """Select the smoothest continuation from the end of a chain."""
+
+    if len(chain) < 2:
+        return candidates[0] if candidates else None
+
+    best_branch: CenterlineBranch | None = None
+    best_score = float("inf")
+
+    for branch in candidates:
+        if branch.start_node_id == shared_node:
+            oriented = branch.points
+        else:
+            oriented = branch.points[::-1]
+
+        if len(oriented) < 2:
+            continue
+
+        turn = _turn_cost(chain[-2], chain[-1], oriented[1])
+        if turn < best_score:
+            best_score = turn
+            best_branch = branch
+
+    return best_branch
+
+
+def _pick_smooth_backward(
+    chain: list[tuple[int, int]],
+    candidates: list[CenterlineBranch],
+    shared_node: int,
+) -> CenterlineBranch | None:
+    """Select the smoothest continuation from the start of a chain."""
+
+    if len(chain) < 2:
+        return candidates[0] if candidates else None
+
+    best_branch: CenterlineBranch | None = None
+    best_score = float("inf")
+
+    for branch in candidates:
+        if branch.end_node_id == shared_node:
+            oriented = branch.points
+        else:
+            oriented = branch.points[::-1]
+
+        if len(oriented) < 2:
+            continue
+
+        turn = _turn_cost(oriented[-2], chain[0], chain[1])
+        if turn < best_score:
+            best_score = turn
+            best_branch = branch
+
+    return best_branch
+
+
+def _order_strokes_by_distance(
+    strokes: list[list[tuple[int, int]]],
+) -> list[list[tuple[int, int]]]:
+    """Order separate strokes by nearest endpoint (pen-up transitions only)."""
+
+    remaining = list(range(len(strokes)))
+    first = remaining.pop(0)
+    ordered_indices = [first]
+
+    while remaining:
+        current_end = strokes[ordered_indices[-1]][-1]
+        best_idx = min(
+            remaining,
+            key=lambda i: min(
+                _dist(current_end, strokes[i][0]),
+                _dist(current_end, strokes[i][-1]),
+            ),
+        )
+        remaining.remove(best_idx)
+        ordered_indices.append(best_idx)
+
+    return [strokes[i] for i in ordered_indices]
 
 
 # Strategy A – Directional Bias (default)

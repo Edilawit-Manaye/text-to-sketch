@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, overload
 
 import cv2
 import numpy as np
@@ -19,6 +19,18 @@ THRESHOLD_PROFILES = ("legacy", "otsu", "sauvola", "hysteresis")
 
 Point = tuple[int, int]
 Stroke = list[Point]
+
+
+@dataclass(frozen=True)
+class CenterlineBranch:
+    """A single skeleton branch with its graph topology metadata."""
+
+    branch_id: int
+    points: list[Point]
+    start_node_id: int
+    end_node_id: int
+    component_id: int
+    is_loop: bool
 
 
 @dataclass(frozen=True)
@@ -84,7 +96,8 @@ def vectorize_image_with_stats(
     method: Literal["contour", "centerline"] = "contour",
     threshold_profile: str = "hysteresis",
     min_object_size: int = 4,
-) -> tuple[list[Stroke], VectorizationStats]:
+    structured: bool = False,
+) -> tuple[list[Stroke], VectorizationStats] | tuple[list[CenterlineBranch], VectorizationStats]:
     """Vectorize a sketch and report the geometry retained by simplification."""
 
     if epsilon < 0:
@@ -100,6 +113,7 @@ def vectorize_image_with_stats(
         epsilon,
         threshold_profile=threshold_profile,
         min_object_size=min_object_size,
+        structured=structured,
     )
 
 
@@ -154,28 +168,73 @@ def foreground_mask(
     return mask
 
 
-def simplify_strokes(strokes: list[Stroke], epsilon: float) -> list[Stroke]:
+def simplify_strokes(
+    strokes: list[Stroke],
+    epsilon: float,
+) -> list[Stroke]:
     """Simplify stroke paths with an absolute pixel-space RDP tolerance."""
 
     if epsilon < 0:
         raise ValueError("epsilon must be non-negative")
     simplified: list[Stroke] = []
     for stroke in strokes:
-        if len(stroke) < 2:
-            continue
-        closed = len(stroke) > 2 and _points_touch(stroke[0], stroke[-1])
-        if epsilon == 0:
-            points = list(stroke)
-        else:
-            contour = np.asarray(stroke, dtype=np.float32).reshape(-1, 1, 2)
-            approx = cv2.approxPolyDP(contour, float(epsilon), closed=closed)
-            points = [(int(round(point[0][0])), int(round(point[0][1]))) for point in approx]
-        points = _deduplicate_consecutive(points)
-        if closed and len(points) > 2 and points[0] != points[-1]:
-            points.append(points[0])
-        if len(points) > 1:
-            simplified.append(points)
+        simplified_points = _simplify_single(stroke, epsilon)
+        if simplified_points is not None:
+            simplified.append(simplified_points)
     return simplified
+
+
+def simplify_branches(
+    branches: list[CenterlineBranch],
+    epsilon: float,
+) -> list[CenterlineBranch]:
+    """Simplify branch points via RDP while preserving topology metadata."""
+
+    if epsilon < 0:
+        raise ValueError("epsilon must be non-negative")
+    simplified: list[CenterlineBranch] = []
+    for branch in branches:
+        simplified_points = _simplify_single(branch.points, epsilon)
+        if simplified_points is None:
+            continue
+        first_point = branch.points[0]
+        last_point = branch.points[-1]
+        simplified_points[0] = first_point
+        simplified_points[-1] = last_point
+        simplified.append(
+            CenterlineBranch(
+                branch_id=branch.branch_id,
+                points=simplified_points,
+                start_node_id=branch.start_node_id,
+                end_node_id=branch.end_node_id,
+                component_id=branch.component_id,
+                is_loop=branch.is_loop,
+            )
+        )
+    return simplified
+
+
+def _simplify_single(
+    stroke: list[Point],
+    epsilon: float,
+) -> list[Point] | None:
+    """RDP-simplify one coordinate list. Returns None if result is too short."""
+
+    if len(stroke) < 2:
+        return None
+    closed = len(stroke) > 2 and _points_touch(stroke[0], stroke[-1])
+    if epsilon == 0:
+        points = list(stroke)
+    else:
+        contour = np.asarray(stroke, dtype=np.float32).reshape(-1, 1, 2)
+        approx = cv2.approxPolyDP(contour, float(epsilon), closed=closed)
+        points = [(int(round(point[0][0])), int(round(point[0][1]))) for point in approx]
+    points = _deduplicate_consecutive(points)
+    if closed and len(points) > 2 and points[0] != points[-1]:
+        points.append(points[0])
+    if len(points) > 1:
+        return points
+    return None
 
 
 def rasterize_strokes(
@@ -263,18 +322,37 @@ def _vectorize_centerline(
     *,
     threshold_profile: str,
     min_object_size: int,
-) -> tuple[list[Stroke], VectorizationStats]:
+    structured: bool = False,
+) -> tuple[list[Stroke], VectorizationStats] | tuple[list[CenterlineBranch], VectorizationStats]:
     mask = foreground_mask(
         image,
         profile=threshold_profile,
         min_object_size=min_object_size,
     )
     skeleton = skeletonize(mask)
-    raw = _skeleton_paths(skeleton)
-    strokes = simplify_strokes(raw, epsilon)
+    raw_branches = _skeleton_paths(skeleton)
+    raw_count = len(raw_branches)
+
+    if structured:
+        branches = simplify_branches(raw_branches, epsilon)
+        return branches, VectorizationStats(
+            epsilon=float(epsilon),
+            raw_stroke_count=raw_count,
+            raw_point_count=int(skeleton.sum()),
+            simplified_stroke_count=len(branches),
+            simplified_point_count=sum(len(b.points) for b in branches),
+            method="centerline",
+            threshold_profile=threshold_profile,
+            foreground_point_count=int(mask.sum()),
+            image_height=int(image.shape[0]),
+            image_width=int(image.shape[1]),
+        )
+
+    raw_strokes = [branch.points for branch in raw_branches]
+    strokes = simplify_strokes(raw_strokes, epsilon)
     return strokes, VectorizationStats(
         epsilon=float(epsilon),
-        raw_stroke_count=len(raw),
+        raw_stroke_count=raw_count,
         raw_point_count=int(skeleton.sum()),
         simplified_stroke_count=len(strokes),
         simplified_point_count=sum(len(stroke) for stroke in strokes),
@@ -286,7 +364,7 @@ def _vectorize_centerline(
     )
 
 
-def _skeleton_paths(skeleton: np.ndarray) -> list[Stroke]:
+def _skeleton_paths(skeleton: np.ndarray) -> list[CenterlineBranch]:
     if not np.asarray(skeleton, dtype=bool).any():
         return []
     try:
@@ -296,8 +374,17 @@ def _skeleton_paths(skeleton: np.ndarray) -> list[Stroke]:
             "Centerline vectorization requires skan>=0.13.1; install project requirements"
         ) from exc
 
+    import networkx as nx
+
     graph = Skeleton(np.asarray(skeleton, dtype=np.uint8), keep_images=False)
-    paths: list[Stroke] = []
+
+    node_to_component: dict[int, int] = {}
+    nx_graph = nx.from_scipy_sparse_array(graph.graph)
+    for component_id, component_nodes in enumerate(nx.connected_components(nx_graph)):
+        for node in component_nodes:
+            node_to_component[node] = component_id
+
+    branches: list[CenterlineBranch] = []
     for index in range(graph.n_paths):
         coordinates = np.asarray(graph.path_coordinates(index))
         if len(coordinates) < 2:
@@ -307,10 +394,34 @@ def _skeleton_paths(skeleton: np.ndarray) -> list[Stroke]:
             for row, column in coordinates[:, :2]
         ]
         points = _deduplicate_consecutive(points)
-        if len(points) > 1:
-            paths.append(points)
-    paths.sort(key=lambda stroke: (min(y for _, y in stroke), min(x for x, _ in stroke), -len(stroke)))
-    return paths
+        if len(points) < 2:
+            continue
+
+        node_ids = graph.path(index)
+        start_node = int(node_ids[0])
+        end_node = int(node_ids[-1])
+        is_loop = start_node == end_node
+        component_id = node_to_component.get(start_node, 0)
+
+        branches.append(
+            CenterlineBranch(
+                branch_id=index,
+                points=points,
+                start_node_id=start_node,
+                end_node_id=end_node,
+                component_id=component_id,
+                is_loop=is_loop,
+            )
+        )
+
+    branches.sort(
+        key=lambda b: (
+            min(y for _, y in b.points),
+            min(x for x, _ in b.points),
+            -len(b.points),
+        )
+    )
+    return branches
 
 
 def _safe_otsu(values: np.ndarray) -> float:
