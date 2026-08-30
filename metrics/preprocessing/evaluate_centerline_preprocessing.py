@@ -11,7 +11,21 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from pipeline.ordering import order_continuity_greedy
+from pipeline.ordering import (
+    order_continuity_greedy,
+    order_continuity_topology,
+    order_directional_bias,
+    order_greedy_nearest_neighbor,
+    order_tsp,
+)
+
+_ORDER_FN_MAP = {
+    "continuity": order_continuity_greedy,
+    "directional": order_directional_bias,
+    "greedy": order_greedy_nearest_neighbor,
+    "tsp": order_tsp,
+    "continuity-topology": order_continuity_topology,
+}
 from pipeline.stroke5 import Stroke5Transform, stroke5_to_canvas_strokes
 from pipeline.vectorization import (
     THRESHOLD_PROFILES,
@@ -36,6 +50,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--token-dict-dir", type=Path, default=DEFAULT_SKETCH_TOKEN_DIR)
     parser.add_argument("--samples", type=int, default=100)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--ordering",
+        choices=sorted(_ORDER_FN_MAP),
+        default="continuity",
+        help="Stroke-ordering method used to create the review reconstruction.",
+    )
     parser.add_argument("--rdp-epsilon", type=float, default=0.5)
     parser.add_argument("--max-geometry-error", type=float, default=2.0)
     parser.add_argument("--max-token-length", type=int, default=4096)
@@ -69,6 +89,7 @@ def evaluate_profile(
     epsilon: float,
     max_geometry_error: float,
     max_token_length: int,
+    ordering: str = "continuity",
 ) -> dict[str, object]:
     rows: list[dict[str, float | int | str | bool]] = []
     for path in paths:
@@ -77,7 +98,8 @@ def evaluate_profile(
                 image_path=path,
                 codebook=codebook,
                 quantizer=quantizer,
-                order_fn=order_continuity_greedy,
+                order_fn=_ORDER_FN_MAP[ordering],
+                ordering=ordering,
                 initial_epsilon=epsilon,
                 max_epsilon=max_geometry_error,
                 threshold_profile=profile,
@@ -211,6 +233,7 @@ def write_manual_review_set(
     initial_epsilon: float,
     max_geometry_error: float,
     max_token_length: int,
+    ordering: str = "continuity",
 ) -> Path:
     """Render the exact benchmark targets and a feature-preservation checklist."""
 
@@ -221,7 +244,8 @@ def write_manual_review_set(
             image_path=path,
             codebook=codebook,
             quantizer=quantizer,
-            order_fn=order_continuity_greedy,
+            order_fn=_ORDER_FN_MAP[ordering],
+            ordering=ordering,
             initial_epsilon=initial_epsilon,
             max_epsilon=max_geometry_error,
             threshold_profile=threshold_profile,
@@ -300,6 +324,7 @@ def main() -> int:
                 epsilon=args.rdp_epsilon,
                 max_geometry_error=args.max_geometry_error,
                 max_token_length=args.max_token_length,
+                ordering=args.ordering,
             )
             for profile in args.threshold_profiles
         ]
@@ -332,6 +357,7 @@ def main() -> int:
         "rdp_epsilon": args.rdp_epsilon,
         "max_geometry_error": args.max_geometry_error,
         "max_token_length": args.max_token_length,
+        "ordering": args.ordering,
         "token_dictionary_path": str(codebook_path),
         "token_dictionary_sha256": hashlib.sha256(codebook_path.read_bytes()).hexdigest(),
         "selected_extractor": selected_extractor,
@@ -355,6 +381,7 @@ def main() -> int:
             initial_epsilon=args.rdp_epsilon,
             max_geometry_error=args.max_geometry_error,
             max_token_length=args.max_token_length,
+            ordering=args.ordering,
         )
         print(f"manual_review={checklist_path}")
     if args.enforce:
